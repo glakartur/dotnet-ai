@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.x'
+
+      - name: Restore
+        run: dotnet restore dotnet-ai.sln
+
+      - name: Build
+        run: dotnet build dotnet-ai.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test dotnet-ai.sln -c Release --no-build --verbosity normal
+
+      - name: Pack (verify tool packs correctly)
+        run: dotnet pack src/DotnetAi/DotnetAi.csproj -c Release --no-build -o ./nupkg

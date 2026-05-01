@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <AssemblyName>dotnet-ai</AssemblyName>
+    <RootNamespace>DotnetAi</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+
+    <!-- dotnet tool metadata -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>dotnet-ai</ToolCommandName>
+    <PackageId>dotnet-ai</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Your Name</Authors>
+    <Description>Semantic .NET code analysis for AI agents — find references, rename symbols, explore call hierarchy using Roslyn.</Description>
+    <PackageTags>roslyn;ai;agent;refactoring;codeanalysis;mcp;dotnet</PackageTags>
+    <PackageProjectUrl>https://github.com/yourusername/dotnet-ai</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/yourusername/dotnet-ai</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Roslyn / MSBuild -->
+    <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="4.12.0" />
+    <PackageReference Include="Microsoft.Build.Locator" Version="1.7.8" />
+
+    <!-- CLI framework -->
+    <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+  </ItemGroup>
+</Project>
