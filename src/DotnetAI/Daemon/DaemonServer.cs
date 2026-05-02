@@ -20,10 +20,23 @@ public sealed class DaemonServer : IAsyncDisposable
     private DateTime _loadedAt;
     private FileSystemWatcher? _watcher;
     private readonly SemaphoreSlim _solutionLock = new(1, 1);
+    private readonly object _idleLock = new();
+    private DaemonLifecycleState _lifecycleState = DaemonLifecycleState.Running;
+    private DaemonIdleTimeoutSetting _idleTimeout = DaemonIdleTimeoutSetting.Default;
+    private DateTime _idleDeadlineUtc;
+    private CancellationTokenSource? _idleWatcherCts;
+    private int _activeRequests;
 
     public DaemonServer(string solutionPath)
     {
         _solutionPath = Path.GetFullPath(solutionPath);
+    }
+
+    public DaemonServer(string solutionPath, DaemonIdleTimeoutSetting? idleTimeout)
+        : this(solutionPath)
+    {
+        if (idleTimeout is not null)
+            _idleTimeout = idleTimeout;
     }
 
     public async Task RunAsync()
@@ -54,6 +67,8 @@ public sealed class DaemonServer : IAsyncDisposable
         Log($"Projects: {_solution!.Projects.Count()}, " +
             $"Documents: {_solution.Projects.Sum(p => p.Documents.Count())}");
 
+        ResetIdleDeadline();
+
         while (!_cts.Token.IsCancellationRequested)
         {
             try
@@ -77,6 +92,8 @@ public sealed class DaemonServer : IAsyncDisposable
         using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
         await using var writer = new StreamWriter(stream, Encoding.UTF8, leaveOpen: true)
             { AutoFlush = true };
+        string? command = null;
+        var requestStarted = false;
 
         try
         {
@@ -86,12 +103,33 @@ public sealed class DaemonServer : IAsyncDisposable
             var request = JsonOutput.Deserialize<DaemonRequest>(line)
                 ?? throw new InvalidOperationException("Invalid request JSON.");
 
+            if (!CanAcceptRequests() && request.Command != "shutdown")
+            {
+                var unavailable = new DaemonResponse(
+                    request.Id,
+                    false,
+                    null,
+                    new ErrorInfo("DAEMON_DRAINING", "Daemon is shutting down and not accepting new requests."),
+                    null);
+
+                await writer.WriteLineAsync(JsonOutput.Serialize(unavailable));
+                return;
+            }
+
+            BeginRequest();
+            requestStarted = true;
+            command = request.Command;
             var response = await DispatchAsync(request, ct);
             await writer.WriteLineAsync(JsonOutput.Serialize(response));
         }
         catch (Exception ex)
         {
             Log($"Client error: {ex.Message}");
+        }
+        finally
+        {
+            if (requestStarted)
+                EndRequest(command ?? string.Empty);
         }
     }
 
@@ -109,11 +147,18 @@ public sealed class DaemonServer : IAsyncDisposable
                 "symbols"  => await HandleSymbolsAsync(req, ct),
                 "status"   => HandleStatus(),
                 "reload"   => await HandleReloadAsync(ct),
+                "setIdleTimeout" => HandleSetIdleTimeout(req),
                 "shutdown" => HandleShutdown(),
                 _ => throw new InvalidOperationException($"Unknown command: {req.Command}")
             };
 
             return new DaemonResponse(req.Id, true, result, null,
+                new ResponseMeta(sw.ElapsedMilliseconds, _loadedAt));
+        }
+        catch (DaemonValidationException ex)
+        {
+            return new DaemonResponse(req.Id, false, null,
+                ex.Error,
                 new ResponseMeta(sw.ElapsedMilliseconds, _loadedAt));
         }
         catch (Exception ex)
@@ -183,11 +228,13 @@ public sealed class DaemonServer : IAsyncDisposable
             foreach (var change in newText.GetTextChanges(oldText))
             {
                 var linePos = oldText.Lines.GetLinePosition(change.Span.Start);
+                var oldTextSegment = oldText.GetSubText(change.Span).ToString();
+
                 changes.Add(new Models.RenameChange(
                     File:    oldDoc.FilePath ?? "",
                     Line:    linePos.Line + 1,
                     Col:     linePos.Character + 1,
-                    OldText: change.OldText ?? "",
+                    OldText: oldTextSegment,
                     NewText: change.NewText));
             }
         }
@@ -220,7 +267,9 @@ public sealed class DaemonServer : IAsyncDisposable
         var symbol = await SymbolResolver.FromFullNameAsync(
             solution, p["symbol"].ToString()!, ct);
 
-        var impls = await SymbolFinder.FindImplementationsAsync(symbol, solution, ct);
+        var impls = symbol is INamedTypeSymbol namedType
+            ? await SymbolFinder.FindImplementationsAsync(namedType, solution, transitive: false, projects: null, ct)
+            : await SymbolFinder.FindImplementationsAsync(symbol, solution, projects: null, ct);
 
         return impls.Select(s => SymbolToResult(s)).ToList();
     }
@@ -308,8 +357,192 @@ public sealed class DaemonServer : IAsyncDisposable
 
     private object HandleShutdown()
     {
-        _cts.CancelAfter(TimeSpan.FromMilliseconds(500));
+        BeginShutdown();
         return new { shutdownInitiated = true };
+    }
+
+    private object HandleSetIdleTimeout(DaemonRequest req)
+    {
+        var p = GetParams(req);
+        if (!p.TryGetValue("value", out var rawObj) || rawObj is null)
+            throw new DaemonValidationException(new ErrorInfo(
+                "INVALID_IDLE_TIMEOUT",
+                "Missing idle timeout value.",
+                new { acceptedValues = "off | <positive duration with unit: m|h>" }));
+
+        var raw = rawObj.ToString() ?? string.Empty;
+        if (!DaemonIdleTimeoutParser.TryParse(raw, out var parsed, out var error))
+            throw new DaemonValidationException(error!);
+
+        return ApplyIdleTimeout(parsed);
+    }
+
+    private Models.IdleTimeoutUpdateResult ApplyIdleTimeout(DaemonIdleTimeoutSetting setting)
+    {
+        lock (_idleLock)
+        {
+            DateTime nextDeadlineUtc;
+            if (setting.Enabled)
+            {
+                try
+                {
+                    nextDeadlineUtc = DateTime.UtcNow + setting.Duration;
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    throw new DaemonValidationException(new ErrorInfo(
+                        "INVALID_IDLE_TIMEOUT",
+                        "Idle timeout is too large.",
+                        new { acceptedValues = "off | <positive duration with unit: m|h>" }));
+                }
+            }
+            else
+            {
+                nextDeadlineUtc = DateTime.MaxValue;
+            }
+
+            var changed = !_idleTimeout.Equals(setting);
+            _idleTimeout = setting;
+            _idleDeadlineUtc = nextDeadlineUtc;
+
+            CancelIdleWatcherUnsafe();
+            if (setting.Enabled)
+            {
+                StartIdleWatcherUnsafe();
+            }
+
+            return new Models.IdleTimeoutUpdateResult(
+                Applied: true,
+                Mode: setting.Enabled ? "duration" : "off",
+                Value: setting.Enabled ? setting.Normalized : null,
+                Changed: changed);
+        }
+    }
+
+    private void ResetIdleDeadline()
+    {
+        lock (_idleLock)
+        {
+            if (!_idleTimeout.Enabled)
+            {
+                _idleDeadlineUtc = DateTime.MaxValue;
+                return;
+            }
+
+            try
+            {
+                _idleDeadlineUtc = DateTime.UtcNow + _idleTimeout.Duration;
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                throw new DaemonValidationException(new ErrorInfo(
+                    "INVALID_IDLE_TIMEOUT",
+                    "Idle timeout is too large.",
+                    new { acceptedValues = "off | <positive duration with unit: m|h>" }));
+            }
+
+            CancelIdleWatcherUnsafe();
+            StartIdleWatcherUnsafe();
+        }
+    }
+
+    private void StartIdleWatcherUnsafe()
+    {
+        if (!_idleTimeout.Enabled || _cts.IsCancellationRequested)
+            return;
+
+        _idleWatcherCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+        _ = WatchIdleAsync(_idleWatcherCts.Token);
+    }
+
+    private void CancelIdleWatcherUnsafe()
+    {
+        if (_idleWatcherCts is null)
+            return;
+
+        _idleWatcherCts.Cancel();
+        _idleWatcherCts.Dispose();
+        _idleWatcherCts = null;
+    }
+
+    private async Task WatchIdleAsync(CancellationToken ct)
+    {
+        TimeSpan delay;
+        lock (_idleLock)
+        {
+            if (!_idleTimeout.Enabled)
+                return;
+
+            delay = _idleDeadlineUtc - DateTime.UtcNow;
+            if (delay < TimeSpan.Zero)
+                delay = TimeSpan.Zero;
+        }
+
+        try
+        {
+            await Task.Delay(delay, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        lock (_idleLock)
+        {
+            if (!_idleTimeout.Enabled)
+                return;
+
+            if (_activeRequests > 0)
+                return;
+
+            if (DateTime.UtcNow < _idleDeadlineUtc)
+                return;
+        }
+
+        BeginShutdown();
+    }
+
+    private bool CanAcceptRequests()
+    {
+        lock (_idleLock)
+        {
+            return _lifecycleState == DaemonLifecycleState.Running;
+        }
+    }
+
+    private void BeginRequest()
+    {
+        lock (_idleLock)
+        {
+            _activeRequests++;
+            CancelIdleWatcherUnsafe();
+        }
+    }
+
+    private void EndRequest(string command)
+    {
+        lock (_idleLock)
+        {
+            if (_activeRequests > 0)
+                _activeRequests--;
+        }
+
+        if (command != "shutdown")
+            ResetIdleDeadline();
+    }
+
+    private void BeginShutdown()
+    {
+        lock (_idleLock)
+        {
+            if (_lifecycleState != DaemonLifecycleState.Running)
+                return;
+
+            _lifecycleState = DaemonLifecycleState.Draining;
+            CancelIdleWatcherUnsafe();
+        }
+
+        _cts.CancelAfter(TimeSpan.FromMilliseconds(500));
     }
 
     // ── Solution management ───────────────────────────────────────────────────
@@ -420,9 +653,33 @@ public sealed class DaemonServer : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        lock (_idleLock)
+        {
+            _lifecycleState = DaemonLifecycleState.Stopped;
+            CancelIdleWatcherUnsafe();
+        }
+
         _watcher?.Dispose();
         _cts.Dispose();
         _workspace?.Dispose();
         _solutionLock.Dispose();
+    }
+}
+
+public enum DaemonLifecycleState
+{
+    Running,
+    Draining,
+    Stopped
+}
+
+public sealed class DaemonValidationException : Exception
+{
+    public ErrorInfo Error { get; }
+
+    public DaemonValidationException(ErrorInfo error)
+        : base(error.Message)
+    {
+        Error = error;
     }
 }

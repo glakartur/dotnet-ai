@@ -6,7 +6,7 @@ namespace DotnetAi.Commands;
 
 public static class CallersCommand
 {
-    public static Command Build(Option<FileInfo> solutionOption)
+    public static Command Build(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
     {
         var fileOpt   = new Option<FileInfo?>("--file",   "Source file containing the symbol");
         var lineOpt   = new Option<int?>("--line",        "1-based line number");
@@ -15,10 +15,10 @@ public static class CallersCommand
 
         var cmd = new Command("callers", "Find all callers of a method (call hierarchy)")
         {
-            solutionOption, fileOpt, lineOpt, colOpt, symbolOpt
+            solutionOption, fileOpt, lineOpt, colOpt, symbolOpt, idleTimeoutOption
         };
 
-        cmd.SetHandler(async (solution, file, line, col, symbol) =>
+        cmd.SetHandler(async (solution, file, line, col, symbol, idleTimeout) =>
         {
             if (symbol is null && (file is null || line is null || col is null))
                 throw new ArgumentException(
@@ -28,13 +28,16 @@ public static class CallersCommand
                 ? (object)new { symbol }
                 : new { file = file!.FullName, line = line!.Value, col = col!.Value };
 
-            var client = await DaemonClient.ConnectOrStartAsync(solution.FullName);
+            var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solution.FullName, idleTimeout);
+            if (client is null)
+                return;
+
             await using (client)
             {
                 var res = await client.SendAsync("callers", @params);
                 JsonOutput.Write(res.Ok ? res.Result : (object)res.Error!);
             }
-        }, solutionOption, fileOpt, lineOpt, colOpt, symbolOpt);
+        }, solutionOption, fileOpt, lineOpt, colOpt, symbolOpt, idleTimeoutOption);
 
         return cmd;
     }

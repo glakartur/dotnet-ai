@@ -27,16 +27,20 @@ var solutionOption = new Option<FileInfo>(
 };
 solutionOption.AddAlias("-s");
 
+var idleTimeoutOption = new Option<string?>(
+    name: "--idle-timeout",
+    description: "Daemon idle timeout for this session: 'off' or a positive duration (m|h)");
+
 // ── Root command ──────────────────────────────────────────────────────────────
 
 var root = new RootCommand(
     "dotnet-ai — semantic .NET code analysis for AI agents, powered by Roslyn");
 
-root.AddCommand(ServerCommand.Build(solutionOption));
-root.AddCommand(RefsCommand.Build(solutionOption));
-root.AddCommand(RenameCommand.Build(solutionOption));
-root.AddCommand(ImplsCommand.Build(solutionOption));
-root.AddCommand(CallersCommand.Build(solutionOption));
-root.AddCommand(SymbolsCommand.Build(solutionOption));
+root.AddCommand(ServerCommand.Build(solutionOption, idleTimeoutOption));
+root.AddCommand(RefsCommand.Build(solutionOption, idleTimeoutOption));
+root.AddCommand(RenameCommand.Build(solutionOption, idleTimeoutOption));
+root.AddCommand(ImplsCommand.Build(solutionOption, idleTimeoutOption));
+root.AddCommand(CallersCommand.Build(solutionOption, idleTimeoutOption));
+root.AddCommand(SymbolsCommand.Build(solutionOption, idleTimeoutOption));
 
 return await root.InvokeAsync(args);

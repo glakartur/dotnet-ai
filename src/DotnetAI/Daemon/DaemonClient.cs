@@ -28,11 +28,7 @@ public sealed class DaemonClient : IAsyncDisposable
     {
         var socketPath = GetSocketPath(solutionPath);
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            if (!System.IO.Pipes.PipeExists(socketPath)) return null;
-        }
-        else
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
             if (!File.Exists(socketPath)) return null;
         }
@@ -52,13 +48,33 @@ public sealed class DaemonClient : IAsyncDisposable
 
     public static async Task<DaemonClient> ConnectOrStartAsync(
         string solutionPath,
-        TimeSpan? startTimeout = null)
+        TimeSpan? startTimeout = null,
+        string? idleTimeout = null)
     {
+        if (!DaemonIdleTimeoutParser.TryParseOptional(idleTimeout, out var parsedTimeout, out var parseError))
+            throw new DaemonClientValidationException(parseError!);
+
         var client = await TryConnectAsync(solutionPath);
-        if (client is not null) return client;
+        if (client is not null)
+        {
+            if (parsedTimeout is not null)
+            {
+                try
+                {
+                    await ApplyIdleTimeoutAsync(client, parsedTimeout);
+                }
+                catch
+                {
+                    await client.DisposeAsync();
+                    throw;
+                }
+            }
+
+            return client;
+        }
 
         Console.Error.WriteLine("[dotnet-ai] Starting analysis daemon (first run loads the solution)...");
-        await StartDaemonProcessAsync(solutionPath);
+        await StartDaemonProcessAsync(solutionPath, parsedTimeout);
 
         var timeout = startTimeout ?? TimeSpan.FromSeconds(120);
         client = await WaitForDaemonAsync(solutionPath, timeout)
@@ -70,17 +86,24 @@ public sealed class DaemonClient : IAsyncDisposable
         return client;
     }
 
-    private static async Task StartDaemonProcessAsync(string solutionPath)
+    private static async Task StartDaemonProcessAsync(string solutionPath, DaemonIdleTimeoutSetting? idleTimeout)
     {
         var exe = Environment.ProcessPath
             ?? throw new InvalidOperationException("Cannot determine current process path.");
+
+        var args = new List<string> { "server", "start", "--solution", solutionPath };
+        if (idleTimeout is not null)
+        {
+            var value = idleTimeout.Enabled ? idleTimeout.Normalized : "off";
+            args.Add("--idle-timeout");
+            args.Add(value);
+        }
 
         var proc = new Process
         {
             StartInfo = new ProcessStartInfo
             {
                 FileName        = exe,
-                ArgumentList    = { "server", "start", "--solution", solutionPath },
                 UseShellExecute = false,
                 CreateNoWindow  = true,
                 // Daemon's stderr goes to a log file so it doesn't pollute CLI output
@@ -88,6 +111,9 @@ public sealed class DaemonClient : IAsyncDisposable
                 RedirectStandardOutput = false,
             }
         };
+
+        foreach (var arg in args)
+            proc.StartInfo.ArgumentList.Add(arg);
 
         proc.Start();
         // Detach — daemon outlives this CLI process
@@ -147,5 +173,27 @@ public sealed class DaemonClient : IAsyncDisposable
         await _writer.DisposeAsync();
         _reader.Dispose();
         _socket.Dispose();
+    }
+
+    private static async Task ApplyIdleTimeoutAsync(DaemonClient client, DaemonIdleTimeoutSetting setting)
+    {
+        var value = setting.Enabled ? setting.Normalized : "off";
+        var response = await client.SendAsync("setIdleTimeout", new { value });
+        if (response.Ok)
+            return;
+
+        var error = response.Error ?? new ErrorInfo("INVALID_IDLE_TIMEOUT", "Invalid idle timeout value.");
+        throw new DaemonClientValidationException(error);
+    }
+}
+
+public sealed class DaemonClientValidationException : Exception
+{
+    public ErrorInfo Error { get; }
+
+    public DaemonClientValidationException(ErrorInfo error)
+        : base(error.Message)
+    {
+        Error = error;
     }
 }

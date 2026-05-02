@@ -6,7 +6,7 @@ namespace DotnetAi.Commands;
 
 public static class RefsCommand
 {
-    public static Command Build(Option<FileInfo> solutionOption)
+    public static Command Build(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
     {
         var fileOpt   = new Option<FileInfo?>("--file",   "Source file containing the symbol");
         var lineOpt   = new Option<int?>("--line",        "1-based line number");
@@ -15,10 +15,10 @@ public static class RefsCommand
 
         var cmd = new Command("refs", "Find all references to a symbol")
         {
-            solutionOption, fileOpt, lineOpt, colOpt, symbolOpt
+            solutionOption, fileOpt, lineOpt, colOpt, symbolOpt, idleTimeoutOption
         };
 
-        cmd.SetHandler(async (solution, file, line, col, symbol) =>
+        cmd.SetHandler(async (solution, file, line, col, symbol, idleTimeout) =>
         {
             ValidateArgs(file, line, col, symbol);
 
@@ -26,13 +26,16 @@ public static class RefsCommand
                 ? (object)new { symbol }
                 : new { file = file!.FullName, line = line!.Value, col = col!.Value };
 
-            var client = await DaemonClient.ConnectOrStartAsync(solution.FullName);
+            var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solution.FullName, idleTimeout);
+            if (client is null)
+                return;
+
             await using (client)
             {
                 var res = await client.SendAsync("refs", @params);
                 JsonOutput.Write(res.Ok ? res.Result : (object)res.Error!);
             }
-        }, solutionOption, fileOpt, lineOpt, colOpt, symbolOpt);
+        }, solutionOption, fileOpt, lineOpt, colOpt, symbolOpt, idleTimeoutOption);
 
         return cmd;
     }

@@ -121,6 +121,12 @@ dotnet ai server reload --solution App.sln
 
 # Stop the daemon
 dotnet ai server stop --solution App.sln
+
+# Start daemon with session-scoped idle timeout
+dotnet ai server start --solution App.sln --idle-timeout 30m
+
+# Disable idle auto-shutdown for current daemon session
+dotnet ai server start --solution App.sln --idle-timeout off
 ```
 
 ---
@@ -132,8 +138,15 @@ a background daemon that loads the solution and keeps it in memory. The daemon:
 
 - **Listens** on a Unix domain socket (path derived from the solution path)
 - **Watches** for `.cs` file changes and applies them incrementally (no full reload)
-- **Persists** until you stop it explicitly or reboot
+- **Auto-shuts down after 60 minutes of inactivity** by default
+- **Supports session-scoped timeout override** via `--idle-timeout` (`off` or a positive duration like `5m`, `1h`)
+- **Resets idle deadline after each handled request completion**
 - **Supports** multiple simultaneous solutions (one daemon per solution)
+
+Idle timeout is session-scoped only. If the daemon stops (manual stop or idle shutdown),
+the next session starts with the default timeout unless you pass `--idle-timeout` again.
+
+If timeout validation fails, the command returns a JSON error and timeout state is not changed.
 
 ```bash
 # First call — daemon starts, loads solution (takes a few seconds)

@@ -6,7 +6,7 @@ namespace DotnetAi.Commands;
 
 public static class ImplsCommand
 {
-    public static Command Build(Option<FileInfo> solutionOption)
+    public static Command Build(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
     {
         var symbolOpt = new Option<string>("--symbol",
             "Fully-qualified interface or abstract member name") { IsRequired = true };
@@ -14,18 +14,21 @@ public static class ImplsCommand
         var cmd = new Command("impls",
             "Find all implementations of an interface or abstract member")
         {
-            solutionOption, symbolOpt
+            solutionOption, symbolOpt, idleTimeoutOption
         };
 
-        cmd.SetHandler(async (solution, symbol) =>
+        cmd.SetHandler(async (solution, symbol, idleTimeout) =>
         {
-            var client = await DaemonClient.ConnectOrStartAsync(solution.FullName);
+            var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solution.FullName, idleTimeout);
+            if (client is null)
+                return;
+
             await using (client)
             {
                 var res = await client.SendAsync("impls", new { symbol });
                 JsonOutput.Write(res.Ok ? res.Result : (object)res.Error!);
             }
-        }, solutionOption, symbolOpt);
+        }, solutionOption, symbolOpt, idleTimeoutOption);
 
         return cmd;
     }

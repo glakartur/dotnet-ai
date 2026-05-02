@@ -13,3 +13,5 @@
 - Incremental file watching — `.cs` changes applied without full solution reload
 - JSON output on stdout, logs on stderr — clean for agent consumption
 - Cross-platform: Linux, macOS, Windows
+- Session-scoped daemon idle auto-shutdown (default 60m) with `--idle-timeout` override (`off` or positive duration with `m|h`, e.g. `5m`, `1h`)
+- Strict idle-timeout validation with non-mutating error behavior on invalid input
