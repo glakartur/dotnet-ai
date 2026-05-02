@@ -58,3 +58,9 @@ public record DaemonResponse(
 public record ResponseMeta(
     long DurationMs,
     DateTime SolutionLoadedAt);
+
+public record IdleTimeoutUpdateResult(
+    bool Applied,
+    string Mode,
+    string? Value,
+    bool Changed);

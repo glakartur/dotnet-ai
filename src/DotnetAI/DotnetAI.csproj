@@ -3,7 +3,7 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net9.0</TargetFramework>
     <AssemblyName>dotnet-ai</AssemblyName>
-    <RootNamespace>DotnetAi</RootNamespace>
+    <RootNamespace>DotnetAI</RootNamespace>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
@@ -29,6 +29,7 @@
 
   <ItemGroup>
     <!-- Roslyn / MSBuild -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.12.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="4.12.0" />
     <PackageReference Include="Microsoft.Build.Locator" Version="1.7.8" />
 

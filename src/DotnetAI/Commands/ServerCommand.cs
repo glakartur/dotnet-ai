@@ -6,28 +6,35 @@ namespace DotnetAi.Commands;
 
 public static class ServerCommand
 {
-    public static Command Build(Option<FileInfo> solutionOption)
+    public static Command Build(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
     {
         var cmd = new Command("server", "Manage the analysis daemon");
 
-        cmd.AddCommand(BuildStart(solutionOption));
+        cmd.AddCommand(BuildStart(solutionOption, idleTimeoutOption));
         cmd.AddCommand(BuildStop(solutionOption));
         cmd.AddCommand(BuildStatus(solutionOption));
-        cmd.AddCommand(BuildReload(solutionOption));
+        cmd.AddCommand(BuildReload(solutionOption, idleTimeoutOption));
 
         return cmd;
     }
 
-    private static Command BuildStart(Option<FileInfo> solutionOption)
+    private static Command BuildStart(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
     {
         var cmd = new Command("start", "Start the daemon (usually called automatically)");
         cmd.AddOption(solutionOption);
+        cmd.AddOption(idleTimeoutOption);
 
-        cmd.SetHandler(async (solution) =>
+        cmd.SetHandler(async (solution, idleTimeout) =>
         {
-            await using var server = new DaemonServer(solution.FullName);
+            if (!DaemonIdleTimeoutParser.TryParseOptional(idleTimeout, out var timeout, out var error))
+            {
+                JsonOutput.WriteError(error!.Code, error.Message, error.Details);
+                return;
+            }
+
+            await using var server = new DaemonServer(solution.FullName, timeout);
             await server.RunAsync();
-        }, solutionOption);
+        }, solutionOption, idleTimeoutOption);
 
         return cmd;
     }
@@ -78,20 +85,24 @@ public static class ServerCommand
         return cmd;
     }
 
-    private static Command BuildReload(Option<FileInfo> solutionOption)
+    private static Command BuildReload(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
     {
         var cmd = new Command("reload", "Reload the solution (e.g. after adding/removing projects)");
         cmd.AddOption(solutionOption);
+        cmd.AddOption(idleTimeoutOption);
 
-        cmd.SetHandler(async (solution) =>
+        cmd.SetHandler(async (solution, idleTimeout) =>
         {
-            var client = await DaemonClient.ConnectOrStartAsync(solution.FullName);
+            var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solution.FullName, idleTimeout);
+            if (client is null)
+                return;
+
             await using (client)
             {
                 var res = await client.SendAsync("reload");
                 JsonOutput.Write(res.Ok ? res.Result : (object)res.Error!);
             }
-        }, solutionOption);
+        }, solutionOption, idleTimeoutOption);
 
         return cmd;
     }
