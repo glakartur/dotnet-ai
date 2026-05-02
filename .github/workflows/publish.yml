@@ -14,7 +14,9 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.x'
+          dotnet-version: |
+            9.x
+            10.x
 
       - name: Extract version from tag
         id: version
@@ -22,6 +24,7 @@ jobs:
 
       - name: Restore & Build
         run: |
+          dotnet tool restore
           dotnet restore dotnet-ai.sln
           dotnet build dotnet-ai.sln -c Release --no-restore
 
@@ -29,9 +32,23 @@ jobs:
         run: dotnet test dotnet-ai.sln -c Release --no-build
 
       - name: Pack
-        run: dotnet pack src/DotnetAi/DotnetAi.csproj -c Release --no-build \
+        run: dotnet pack src/DotnetAI/DotnetAI.csproj -c Release --no-build \
                /p:Version=${{ steps.version.outputs.VERSION }} \
                -o ./nupkg
+
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          mkdir -p ./artifacts/sbom
+          dotnet tool run dotnet-CycloneDX dotnet-ai.sln \
+            -o ./artifacts/sbom \
+            -F Json \
+            -fn bom.cdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: ./artifacts/sbom/bom.cdx.json
 
       - name: Push to NuGet
         run: dotnet nuget push ./nupkg/*.nupkg \
