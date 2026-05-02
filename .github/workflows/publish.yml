@@ -31,6 +31,39 @@ jobs:
       - name: Test
         run: dotnet test dotnet-ai.sln -c Release --no-build
 
+      - name: Security gate - vulnerable packages
+        run: |
+          dotnet list dotnet-ai.sln package --vulnerable --include-transitive --format json > vulnerabilities.json
+          python - <<'PY'
+          import json
+          import sys
+
+          with open("vulnerabilities.json", "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          projects = data.get("projects", [])
+          vulnerable = []
+
+          for project in projects:
+              path = project.get("path", "unknown")
+              frameworks = project.get("frameworks", [])
+              for framework in frameworks:
+                  for package in framework.get("topLevelPackages", []):
+                      for vuln in package.get("vulnerabilities", []):
+                          vulnerable.append((path, framework.get("framework", "unknown"), package.get("id", "unknown"), package.get("resolvedVersion", "unknown"), vuln.get("severity", "unknown"), vuln.get("advisoryurl", "")))
+                  for package in framework.get("transitivePackages", []):
+                      for vuln in package.get("vulnerabilities", []):
+                          vulnerable.append((path, framework.get("framework", "unknown"), package.get("id", "unknown"), package.get("resolvedVersion", "unknown"), vuln.get("severity", "unknown"), vuln.get("advisoryurl", "")))
+
+          if vulnerable:
+              print("Vulnerable packages detected:")
+              for entry in vulnerable:
+                  print(f"- project={entry[0]} framework={entry[1]} package={entry[2]} version={entry[3]} severity={entry[4]} advisory={entry[5]}")
+              sys.exit(1)
+
+          print("No vulnerable packages detected.")
+          PY
+
       - name: Pack
         run: dotnet pack src/DotnetAI/DotnetAI.csproj -c Release --no-build \
                /p:Version=${{ steps.version.outputs.VERSION }} \
