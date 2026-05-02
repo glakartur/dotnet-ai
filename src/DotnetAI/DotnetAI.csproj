@@ -13,11 +13,11 @@
     <ToolCommandName>dotnet-ai</ToolCommandName>
     <PackageId>dotnet-ai</PackageId>
     <Version>0.1.0</Version>
-    <Authors>Your Name</Authors>
+    <Authors>Artur Gawrylak</Authors>
     <Description>Semantic .NET code analysis for AI agents — find references, rename symbols, explore call hierarchy using Roslyn.</Description>
     <PackageTags>roslyn;ai;agent;refactoring;codeanalysis;mcp;dotnet</PackageTags>
-    <PackageProjectUrl>https://github.com/yourusername/dotnet-ai</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/yourusername/dotnet-ai</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/glakartur/dotnet-ai</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/glakartur/dotnet-ai</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
