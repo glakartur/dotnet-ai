@@ -10,10 +10,10 @@ public static class ServerCommand
     {
         var cmd = new Command("server", "Manage the analysis daemon");
 
-        cmd.AddCommand(BuildStart(solutionOption, idleTimeoutOption));
-        cmd.AddCommand(BuildStop(solutionOption));
-        cmd.AddCommand(BuildStatus(solutionOption));
-        cmd.AddCommand(BuildReload(solutionOption, idleTimeoutOption));
+        cmd.Add(BuildStart(solutionOption, idleTimeoutOption));
+        cmd.Add(BuildStop(solutionOption));
+        cmd.Add(BuildStatus(solutionOption));
+        cmd.Add(BuildReload(solutionOption, idleTimeoutOption));
 
         return cmd;
     }
@@ -21,11 +21,14 @@ public static class ServerCommand
     private static Command BuildStart(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
     {
         var cmd = new Command("start", "Start the daemon (usually called automatically)");
-        cmd.AddOption(solutionOption);
-        cmd.AddOption(idleTimeoutOption);
+        cmd.Add(solutionOption);
+        cmd.Add(idleTimeoutOption);
 
-        cmd.SetHandler(async (solution, idleTimeout) =>
+        cmd.SetAction(async parseResult =>
         {
+            var solution = parseResult.GetRequiredValue(solutionOption);
+            var idleTimeout = parseResult.GetValue(idleTimeoutOption);
+
             if (!DaemonIdleTimeoutParser.TryParseOptional(idleTimeout, out var timeout, out var error))
             {
                 JsonOutput.WriteError(error!.Code, error.Message, error.Details);
@@ -34,7 +37,7 @@ public static class ServerCommand
 
             await using var server = new DaemonServer(solution.FullName, timeout);
             await server.RunAsync();
-        }, solutionOption, idleTimeoutOption);
+        });
 
         return cmd;
     }
@@ -42,10 +45,12 @@ public static class ServerCommand
     private static Command BuildStop(Option<FileInfo> solutionOption)
     {
         var cmd = new Command("stop", "Stop the running daemon for this solution");
-        cmd.AddOption(solutionOption);
+        cmd.Add(solutionOption);
 
-        cmd.SetHandler(async (solution) =>
+        cmd.SetAction(async parseResult =>
         {
+            var solution = parseResult.GetRequiredValue(solutionOption);
+
             var client = await DaemonClient.TryConnectAsync(solution.FullName);
             if (client is null)
             {
@@ -57,7 +62,7 @@ public static class ServerCommand
                 var res = await client.SendAsync("shutdown");
                 JsonOutput.Write(res.Result);
             }
-        }, solutionOption);
+        });
 
         return cmd;
     }
@@ -65,10 +70,12 @@ public static class ServerCommand
     private static Command BuildStatus(Option<FileInfo> solutionOption)
     {
         var cmd = new Command("status", "Show daemon status");
-        cmd.AddOption(solutionOption);
+        cmd.Add(solutionOption);
 
-        cmd.SetHandler(async (solution) =>
+        cmd.SetAction(async parseResult =>
         {
+            var solution = parseResult.GetRequiredValue(solutionOption);
+
             var client = await DaemonClient.TryConnectAsync(solution.FullName);
             if (client is null)
             {
@@ -80,7 +87,7 @@ public static class ServerCommand
                 var res = await client.SendAsync("status");
                 JsonOutput.Write(res.Ok ? res.Result : (object)res.Error!);
             }
-        }, solutionOption);
+        });
 
         return cmd;
     }
@@ -88,11 +95,14 @@ public static class ServerCommand
     private static Command BuildReload(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
     {
         var cmd = new Command("reload", "Reload the solution (e.g. after adding/removing projects)");
-        cmd.AddOption(solutionOption);
-        cmd.AddOption(idleTimeoutOption);
+        cmd.Add(solutionOption);
+        cmd.Add(idleTimeoutOption);
 
-        cmd.SetHandler(async (solution, idleTimeout) =>
+        cmd.SetAction(async parseResult =>
         {
+            var solution = parseResult.GetRequiredValue(solutionOption);
+            var idleTimeout = parseResult.GetValue(idleTimeoutOption);
+
             var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solution.FullName, idleTimeout);
             if (client is null)
                 return;
@@ -102,7 +112,7 @@ public static class ServerCommand
                 var res = await client.SendAsync("reload");
                 JsonOutput.Write(res.Ok ? res.Result : (object)res.Error!);
             }
-        }, solutionOption, idleTimeoutOption);
+        });
 
         return cmd;
     }

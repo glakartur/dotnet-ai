@@ -32,11 +32,13 @@ public class DaemonTimeoutOptionTests
     }
 
     private static Option<FileInfo> BuildSolutionOption()
-        => new("--solution") { IsRequired = true };
+        => new("--solution") { Required = true };
 
     private static Option<string?> BuildIdleTimeoutOption()
         => new("--idle-timeout");
 
     private static void AssertContainsOption(Command command, string alias)
-        => Assert.Contains(command.Options, opt => opt.HasAlias(alias));
+        => Assert.Contains(command.Options, opt =>
+            string.Equals(opt.Name, alias, StringComparison.Ordinal) ||
+            opt.Aliases.Contains(alias));
 }

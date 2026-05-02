@@ -8,18 +8,25 @@ public static class RefsCommand
 {
     public static Command Build(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
     {
-        var fileOpt   = new Option<FileInfo?>("--file",   "Source file containing the symbol");
-        var lineOpt   = new Option<int?>("--line",        "1-based line number");
-        var colOpt    = new Option<int?>("--col",         "1-based column number");
-        var symbolOpt = new Option<string?>("--symbol",   "Fully-qualified symbol name (alternative to --file/--line/--col)");
+        var fileOpt   = new Option<FileInfo?>("--file") { Description = "Source file containing the symbol" };
+        var lineOpt   = new Option<int?>("--line") { Description = "1-based line number" };
+        var colOpt    = new Option<int?>("--col") { Description = "1-based column number" };
+        var symbolOpt = new Option<string?>("--symbol") { Description = "Fully-qualified symbol name (alternative to --file/--line/--col)" };
 
         var cmd = new Command("refs", "Find all references to a symbol")
         {
             solutionOption, fileOpt, lineOpt, colOpt, symbolOpt, idleTimeoutOption
         };
 
-        cmd.SetHandler(async (solution, file, line, col, symbol, idleTimeout) =>
+        cmd.SetAction(async parseResult =>
         {
+            var solution = parseResult.GetRequiredValue(solutionOption);
+            var file = parseResult.GetValue(fileOpt);
+            var line = parseResult.GetValue(lineOpt);
+            var col = parseResult.GetValue(colOpt);
+            var symbol = parseResult.GetValue(symbolOpt);
+            var idleTimeout = parseResult.GetValue(idleTimeoutOption);
+
             ValidateArgs(file, line, col, symbol);
 
             var @params = symbol is not null
@@ -35,7 +42,7 @@ public static class RefsCommand
                 var res = await client.SendAsync("refs", @params);
                 JsonOutput.Write(res.Ok ? res.Result : (object)res.Error!);
             }
-        }, solutionOption, fileOpt, lineOpt, colOpt, symbolOpt, idleTimeoutOption);
+        });
 
         return cmd;
     }

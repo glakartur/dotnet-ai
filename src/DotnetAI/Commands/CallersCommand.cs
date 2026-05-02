@@ -8,18 +8,25 @@ public static class CallersCommand
 {
     public static Command Build(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
     {
-        var fileOpt   = new Option<FileInfo?>("--file",   "Source file containing the symbol");
-        var lineOpt   = new Option<int?>("--line",        "1-based line number");
-        var colOpt    = new Option<int?>("--col",         "1-based column number");
-        var symbolOpt = new Option<string?>("--symbol",   "Fully-qualified method name");
+        var fileOpt   = new Option<FileInfo?>("--file") { Description = "Source file containing the symbol" };
+        var lineOpt   = new Option<int?>("--line") { Description = "1-based line number" };
+        var colOpt    = new Option<int?>("--col") { Description = "1-based column number" };
+        var symbolOpt = new Option<string?>("--symbol") { Description = "Fully-qualified method name" };
 
         var cmd = new Command("callers", "Find all callers of a method (call hierarchy)")
         {
             solutionOption, fileOpt, lineOpt, colOpt, symbolOpt, idleTimeoutOption
         };
 
-        cmd.SetHandler(async (solution, file, line, col, symbol, idleTimeout) =>
+        cmd.SetAction(async parseResult =>
         {
+            var solution = parseResult.GetRequiredValue(solutionOption);
+            var file = parseResult.GetValue(fileOpt);
+            var line = parseResult.GetValue(lineOpt);
+            var col = parseResult.GetValue(colOpt);
+            var symbol = parseResult.GetValue(symbolOpt);
+            var idleTimeout = parseResult.GetValue(idleTimeoutOption);
+
             if (symbol is null && (file is null || line is null || col is null))
                 throw new ArgumentException(
                     "Provide either --symbol OR all of --file --line --col");
@@ -37,7 +44,7 @@ public static class CallersCommand
                 var res = await client.SendAsync("callers", @params);
                 JsonOutput.Write(res.Ok ? res.Result : (object)res.Error!);
             }
-        }, solutionOption, fileOpt, lineOpt, colOpt, symbolOpt, idleTimeoutOption);
+        });
 
         return cmd;
     }

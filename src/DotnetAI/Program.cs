@@ -19,28 +19,27 @@ if (!MSBuildLocator.IsRegistered)
 
 // ── Shared options ────────────────────────────────────────────────────────────
 
-var solutionOption = new Option<FileInfo>(
-    name: "--solution",
-    description: "Path to the .sln or .csproj file to analyze")
+var solutionOption = new Option<FileInfo>("--solution", "-s")
 {
-    IsRequired = true
+    Description = "Path to the .sln or .csproj file to analyze",
+    Required = true
 };
-solutionOption.AddAlias("-s");
 
-var idleTimeoutOption = new Option<string?>(
-    name: "--idle-timeout",
-    description: "Daemon idle timeout for this session: 'off' or a positive duration (m|h)");
+var idleTimeoutOption = new Option<string?>("--idle-timeout")
+{
+    Description = "Daemon idle timeout for this session: 'off' or a positive duration (m|h)"
+};
 
 // ── Root command ──────────────────────────────────────────────────────────────
 
 var root = new RootCommand(
     "dotnet-ai — semantic .NET code analysis for AI agents, powered by Roslyn");
 
-root.AddCommand(ServerCommand.Build(solutionOption, idleTimeoutOption));
-root.AddCommand(RefsCommand.Build(solutionOption, idleTimeoutOption));
-root.AddCommand(RenameCommand.Build(solutionOption, idleTimeoutOption));
-root.AddCommand(ImplsCommand.Build(solutionOption, idleTimeoutOption));
-root.AddCommand(CallersCommand.Build(solutionOption, idleTimeoutOption));
-root.AddCommand(SymbolsCommand.Build(solutionOption, idleTimeoutOption));
+root.Add(ServerCommand.Build(solutionOption, idleTimeoutOption));
+root.Add(RefsCommand.Build(solutionOption, idleTimeoutOption));
+root.Add(RenameCommand.Build(solutionOption, idleTimeoutOption));
+root.Add(ImplsCommand.Build(solutionOption, idleTimeoutOption));
+root.Add(CallersCommand.Build(solutionOption, idleTimeoutOption));
+root.Add(SymbolsCommand.Build(solutionOption, idleTimeoutOption));
 
-return await root.InvokeAsync(args);
+return await root.Parse(args).InvokeAsync();

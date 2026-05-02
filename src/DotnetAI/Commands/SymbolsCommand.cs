@@ -8,19 +8,30 @@ public static class SymbolsCommand
 {
     public static Command Build(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
     {
-        var patternOpt = new Option<string>("--pattern",
-            "Symbol name pattern (supports * and ? wildcards)") { IsRequired = true };
+        var patternOpt = new Option<string>("--pattern")
+        {
+            Description = "Symbol name pattern (supports * and ? wildcards)",
+            Required = true
+        };
 
-        var kindOpt = new Option<string>("--kind", () => "all",
-            "Symbol kind filter: all | type | member | namespace");
+        var kindOpt = new Option<string>("--kind")
+        {
+            Description = "Symbol kind filter: all | type | member | namespace",
+            DefaultValueFactory = _ => "all"
+        };
 
         var cmd = new Command("symbols", "Search symbols by name pattern across the solution")
         {
             solutionOption, patternOpt, kindOpt, idleTimeoutOption
         };
 
-        cmd.SetHandler(async (solution, pattern, kind, idleTimeout) =>
+        cmd.SetAction(async parseResult =>
         {
+            var solution = parseResult.GetRequiredValue(solutionOption);
+            var pattern = parseResult.GetRequiredValue(patternOpt);
+            var kind = parseResult.GetRequiredValue(kindOpt);
+            var idleTimeout = parseResult.GetValue(idleTimeoutOption);
+
             var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solution.FullName, idleTimeout);
             if (client is null)
                 return;
@@ -30,7 +41,7 @@ public static class SymbolsCommand
                 var res = await client.SendAsync("symbols", new { pattern, kind });
                 JsonOutput.Write(res.Ok ? res.Result : (object)res.Error!);
             }
-        }, solutionOption, patternOpt, kindOpt, idleTimeoutOption);
+        });
 
         return cmd;
     }
