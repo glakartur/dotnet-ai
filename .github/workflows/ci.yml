@@ -32,4 +32,4 @@ jobs:
         run: dotnet test dotnet-ai.sln -c Release --no-build --verbosity normal
 
       - name: Pack (verify tool packs correctly)
-        run: dotnet pack src/DotnetAi/DotnetAi.csproj -c Release --no-build -o ./nupkg
+        run: dotnet pack src/DotnetAI/DotnetAI.csproj -c Release --no-build --output ./nupkg
