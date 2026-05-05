@@ -112,7 +112,7 @@ public sealed class DaemonServer : IAsyncDisposable
                     new ErrorInfo("DAEMON_DRAINING", "Daemon is shutting down and not accepting new requests."),
                     null);
 
-                await writer.WriteLineAsync(JsonOutput.Serialize(unavailable));
+                await writer.WriteLineAsync(JsonOutput.Serialize(unavailable).AsMemory(), ct);
                 return;
             }
 
@@ -120,7 +120,7 @@ public sealed class DaemonServer : IAsyncDisposable
             requestStarted = true;
             command = request.Command;
             var response = await DispatchAsync(request, ct);
-            await writer.WriteLineAsync(JsonOutput.Serialize(response));
+            await writer.WriteLineAsync(JsonOutput.Serialize(response).AsMemory(), ct);
         }
         catch (Exception ex)
         {
