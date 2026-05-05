@@ -57,12 +57,12 @@ Today the daemon lives until manual stop or machine restart, which keeps an unne
 
 ### Relevant Code and Patterns
 
-- Daemon loop and request dispatch: `src/DotnetAi/Daemon/DaemonServer.cs`
-- Auto-start and reconnect behavior: `src/DotnetAi/Daemon/DaemonClient.cs`
-- Server command surface: `src/DotnetAi/Commands/ServerCommand.cs`
-- Existing CLI option/validation style: `src/DotnetAi/Commands/RefsCommand.cs`, `src/DotnetAi/Commands/RenameCommand.cs`, `src/DotnetAi/Commands/CallersCommand.cs`
-- Request/response models: `src/DotnetAi/Models/Models.cs`
-- JSON output/error behavior: `src/DotnetAi/Output/JsonOutput.cs`
+- Daemon loop and request dispatch: `src/DotnetAICraft/Daemon/DaemonServer.cs`
+- Auto-start and reconnect behavior: `src/DotnetAICraft/Daemon/DaemonClient.cs`
+- Server command surface: `src/DotnetAICraft/Commands/ServerCommand.cs`
+- Existing CLI option/validation style: `src/DotnetAICraft/Commands/RefsCommand.cs`, `src/DotnetAICraft/Commands/RenameCommand.cs`, `src/DotnetAICraft/Commands/CallersCommand.cs`
+- Request/response models: `src/DotnetAICraft/Models/Models.cs`
+- JSON output/error behavior: `src/DotnetAICraft/Output/JsonOutput.cs`
 
 ### Institutional Learnings
 
@@ -120,9 +120,9 @@ Today the daemon lives until manual stop or machine restart, which keeps an unne
 **Dependencies:** None
 
 **Files:**
-- Modify: `src/DotnetAi/Daemon/DaemonServer.cs`
-- Modify: `src/DotnetAi/Models/Models.cs`
-- Test: `tests/DotnetAi.Tests/Daemon/DaemonIdleTimeoutTests.cs`
+- Modify: `src/DotnetAICraft/Daemon/DaemonServer.cs`
+- Modify: `src/DotnetAICraft/Models/Models.cs`
+- Test: `tests/DotnetAICraft.Tests/Daemon/DaemonIdleTimeoutTests.cs`
 
 **Approach:**
 - Add daemon-session timeout state initialized to default 60 minutes.
@@ -133,8 +133,8 @@ Today the daemon lives until manual stop or machine restart, which keeps an unne
 - Introduce explicit runtime lifecycle states (`Running`, `Draining`, `Stopped`) so idle-triggered shutdown stops accepting new work before cancellation and avoids double-shutdown races.
 
 **Patterns to follow:**
-- Existing daemon cancellation and accept-loop pattern in `src/DotnetAi/Daemon/DaemonServer.cs`.
-- Existing graceful shutdown trigger pattern (`shutdown` command handling) in `src/DotnetAi/Daemon/DaemonServer.cs`.
+- Existing daemon cancellation and accept-loop pattern in `src/DotnetAICraft/Daemon/DaemonServer.cs`.
+- Existing graceful shutdown trigger pattern (`shutdown` command handling) in `src/DotnetAICraft/Daemon/DaemonServer.cs`.
 
 **Test scenarios:**
 - Happy path: Covers AE1. With default timeout and no requests, daemon auto-shuts down after 60-minute effective idle period.
@@ -160,15 +160,15 @@ Today the daemon lives until manual stop or machine restart, which keeps an unne
 **Dependencies:** U1
 
 **Files:**
-- Modify: `src/DotnetAi/Program.cs`
-- Modify: `src/DotnetAi/Commands/RefsCommand.cs`
-- Modify: `src/DotnetAi/Commands/RenameCommand.cs`
-- Modify: `src/DotnetAi/Commands/ImplsCommand.cs`
-- Modify: `src/DotnetAi/Commands/CallersCommand.cs`
-- Modify: `src/DotnetAi/Commands/SymbolsCommand.cs`
-- Modify: `src/DotnetAi/Commands/ServerCommand.cs`
-- Modify: `src/DotnetAi/Daemon/DaemonClient.cs`
-- Test: `tests/DotnetAi.Tests/Commands/DaemonTimeoutOptionTests.cs`
+- Modify: `src/DotnetAICraft/Program.cs`
+- Modify: `src/DotnetAICraft/Commands/RefsCommand.cs`
+- Modify: `src/DotnetAICraft/Commands/RenameCommand.cs`
+- Modify: `src/DotnetAICraft/Commands/ImplsCommand.cs`
+- Modify: `src/DotnetAICraft/Commands/CallersCommand.cs`
+- Modify: `src/DotnetAICraft/Commands/SymbolsCommand.cs`
+- Modify: `src/DotnetAICraft/Commands/ServerCommand.cs`
+- Modify: `src/DotnetAICraft/Daemon/DaemonClient.cs`
+- Test: `tests/DotnetAICraft.Tests/Commands/DaemonTimeoutOptionTests.cs`
 
 **Approach:**
 - Add shared CLI option for timeout input (duration value or `off`) and thread it to daemon connect/start path.
@@ -178,7 +178,7 @@ Today the daemon lives until manual stop or machine restart, which keeps an unne
 - Keep command output contract unchanged (JSON stdout only).
 
 **Patterns to follow:**
-- Shared option plumbing pattern in `src/DotnetAi/Program.cs`.
+- Shared option plumbing pattern in `src/DotnetAICraft/Program.cs`.
 - Existing command handler + `ConnectOrStartAsync` flow in command files.
 
 **Test scenarios:**
@@ -203,10 +203,10 @@ Today the daemon lives until manual stop or machine restart, which keeps an unne
 **Dependencies:** U1, U2
 
 **Files:**
-- Modify: `src/DotnetAi/Commands/ServerCommand.cs`
-- Modify: `src/DotnetAi/Daemon/DaemonServer.cs`
-- Modify: `src/DotnetAi/Daemon/DaemonClient.cs`
-- Test: `tests/DotnetAi.Tests/Commands/DaemonTimeoutValidationTests.cs`
+- Modify: `src/DotnetAICraft/Commands/ServerCommand.cs`
+- Modify: `src/DotnetAICraft/Daemon/DaemonServer.cs`
+- Modify: `src/DotnetAICraft/Daemon/DaemonClient.cs`
+- Test: `tests/DotnetAICraft.Tests/Commands/DaemonTimeoutValidationTests.cs`
 
 **Approach:**
 - Centralize timeout parsing/validation semantics (documented duration format plus `off`).
@@ -216,8 +216,8 @@ Today the daemon lives until manual stop or machine restart, which keeps an unne
 - Treat sentinel handling as deterministic and documented (case-insensitive, surrounding whitespace trimmed).
 
 **Patterns to follow:**
-- Existing argument validation style in `src/DotnetAi/Commands/RefsCommand.cs`.
-- Existing error JSON structure in `src/DotnetAi/Output/JsonOutput.cs`.
+- Existing argument validation style in `src/DotnetAICraft/Commands/RefsCommand.cs`.
+- Existing error JSON structure in `src/DotnetAICraft/Output/JsonOutput.cs`.
 
 **Test scenarios:**
 - Error path: Covers AE5. Invalid timeout returns validation error and session timeout remains previous value.
@@ -292,9 +292,9 @@ Today the daemon lives until manual stop or machine restart, which keeps an unne
 ## Sources & References
 
 - **Origin document:** `docs/brainstorms/daemon-idle-auto-shutdown-requirements.md`
-- Related code: `src/DotnetAi/Daemon/DaemonServer.cs`
-- Related code: `src/DotnetAi/Daemon/DaemonClient.cs`
-- Related code: `src/DotnetAi/Commands/ServerCommand.cs`
+- Related code: `src/DotnetAICraft/Daemon/DaemonServer.cs`
+- Related code: `src/DotnetAICraft/Daemon/DaemonClient.cs`
+- Related code: `src/DotnetAICraft/Commands/ServerCommand.cs`
 - External docs: https://learn.microsoft.com/en-us/dotnet/standard/threading/cancellation-in-managed-threads
 - External docs: https://learn.microsoft.com/en-us/dotnet/api/system.threading.cancellationtokensource?view=net-9.0
 - External docs: https://learn.microsoft.com/en-us/dotnet/api/system.net.sockets.socket.acceptasync?view=net-9.0

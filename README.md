@@ -1,16 +1,16 @@
-# dotnet-ai
+# dotnet-aicraft
 
 **Semantic .NET code analysis for AI agents — powered by Roslyn.**
 
-Instead of text search and grep-based refactoring, `dotnet-ai` gives AI agents real
+Instead of text search and grep-based refactoring, `dotnet-aicraft` gives AI agents real
 semantic understanding of .NET code: find every reference to a symbol, safely rename
 across an entire solution, explore call hierarchies — the same operations your IDE uses.
 
 ```
                     ┌─────────────────────────────┐
- dotnet ai refs     │  Daemon (lives in memory)   │
- dotnet ai rename   │  ┌─────────────────────┐    │
- dotnet ai callers  │  │  Roslyn Workspace   │    │
+ dotnet aicraft refs     │  Daemon (lives in memory)   │
+ dotnet aicraft rename   │  ┌─────────────────────┐    │
+ dotnet aicraft callers  │  │  Roslyn Workspace   │    │
         │           │  │  Solution (cached)  │    │
         └──────────▶│  │  File watcher       │    │
     Unix socket     │  └─────────────────────┘    │
@@ -25,7 +25,7 @@ respond in ~50ms instead of waiting for a full reload every time.
 ## Installation
 
 ```bash
-dotnet tool install -g dotnet-ai
+dotnet tool install -g dotnet-aicraft
 ```
 
 Requires .NET 9 SDK or later. Works on **Linux, macOS and Windows**.
@@ -38,10 +38,10 @@ Requires .NET 9 SDK or later. Works on **Linux, macOS and Windows**.
 
 ```bash
 # By file location (line/col — most useful for agents reading source files)
-dotnet ai refs --solution App.sln --file src/Services/OrderService.cs --line 42 --col 18
+dotnet aicraft refs --solution App.sln --file src/Services/OrderService.cs --line 42 --col 18
 
 # By fully-qualified name
-dotnet ai refs --solution App.sln --symbol "MyApp.Services.OrderService.ProcessOrder"
+dotnet aicraft refs --solution App.sln --symbol "MyApp.Services.OrderService.ProcessOrder"
 ```
 
 ```json
@@ -65,12 +65,12 @@ dotnet ai refs --solution App.sln --symbol "MyApp.Services.OrderService.ProcessO
 
 ```bash
 # Preview changes first (dry run)
-dotnet ai rename --solution App.sln \
+dotnet aicraft rename --solution App.sln \
   --symbol "MyApp.Services.OrderService.ProcessOrder" \
   --to "HandleOrder" --dry-run
 
 # Apply the rename
-dotnet ai rename --solution App.sln \
+dotnet aicraft rename --solution App.sln \
   --symbol "MyApp.Services.OrderService.ProcessOrder" \
   --to "HandleOrder"
 ```
@@ -91,49 +91,49 @@ dotnet ai rename --solution App.sln \
 ### Find implementations of an interface
 
 ```bash
-dotnet ai impls --solution App.sln --symbol "MyApp.Interfaces.IOrderProcessor"
+dotnet aicraft impls --solution App.sln --symbol "MyApp.Interfaces.IOrderProcessor"
 ```
 
 ### Find callers of a method (call hierarchy)
 
 ```bash
-dotnet ai callers --solution App.sln --symbol "MyApp.Services.OrderService.ProcessOrder"
+dotnet aicraft callers --solution App.sln --symbol "MyApp.Services.OrderService.ProcessOrder"
 
 # Or by location:
-dotnet ai callers --solution App.sln --file Services/OrderService.cs --line 42 --col 18
+dotnet aicraft callers --solution App.sln --file Services/OrderService.cs --line 42 --col 18
 ```
 
 ### Search symbols by pattern
 
 ```bash
-dotnet ai symbols --solution App.sln --pattern "Process*" --kind method
-dotnet ai symbols --solution App.sln --pattern "*Repository" --kind type
+dotnet aicraft symbols --solution App.sln --pattern "Process*" --kind method
+dotnet aicraft symbols --solution App.sln --pattern "*Repository" --kind type
 ```
 
 ### Daemon management
 
 ```bash
 # Check if daemon is running and solution stats
-dotnet ai server status --solution App.sln
+dotnet aicraft server status --solution App.sln
 
 # Reload solution (e.g. after adding/removing projects)
-dotnet ai server reload --solution App.sln
+dotnet aicraft server reload --solution App.sln
 
 # Stop the daemon
-dotnet ai server stop --solution App.sln
+dotnet aicraft server stop --solution App.sln
 
 # Start daemon with session-scoped idle timeout
-dotnet ai server start --solution App.sln --idle-timeout 30m
+dotnet aicraft server start --solution App.sln --idle-timeout 30m
 
 # Disable idle auto-shutdown for current daemon session
-dotnet ai server start --solution App.sln --idle-timeout off
+dotnet aicraft server start --solution App.sln --idle-timeout off
 ```
 
 ---
 
 ## How the daemon works
 
-The first time you run any `dotnet ai` command against a solution, the tool starts
+The first time you run any `dotnet aicraft` command against a solution, the tool starts
 a background daemon that loads the solution and keeps it in memory. The daemon:
 
 - **Listens** on a Unix domain socket (path derived from the solution path)
@@ -150,13 +150,13 @@ If timeout validation fails, the command returns a JSON error and timeout state 
 
 ```bash
 # First call — daemon starts, loads solution (takes a few seconds)
-$ dotnet ai refs --solution App.sln --file Foo.cs --line 10 --col 5
-[dotnet-ai] Starting analysis daemon (first run loads the solution)...
-[dotnet-ai] Ready.
+$ dotnet aicraft refs --solution App.sln --file Foo.cs --line 10 --col 5
+[dotnet-aicraft] Starting analysis daemon (first run loads the solution)...
+[dotnet-aicraft] Ready.
 [{ "file": "...", ... }]
 
 # All subsequent calls — instant
-$ dotnet ai callers --solution App.sln --file Foo.cs --line 10 --col 5
+$ dotnet aicraft callers --solution App.sln --file Foo.cs --line 10 --col 5
 [{ ... }]   # ~50ms
 ```
 
@@ -166,14 +166,14 @@ $ dotnet ai callers --solution App.sln --file Foo.cs --line 10 --col 5
 
 | Command | Description |
 |---|---|
-| `dotnet ai refs` | All references to a symbol |
-| `dotnet ai rename` | Safe rename across solution (with `--dry-run`) |
-| `dotnet ai impls` | Implementations of interface/abstract member |
-| `dotnet ai callers` | All callers of a method |
-| `dotnet ai symbols` | Search symbols by name pattern |
-| `dotnet ai server status` | Daemon status |
-| `dotnet ai server reload` | Reload solution |
-| `dotnet ai server stop` | Stop daemon |
+| `dotnet aicraft refs` | All references to a symbol |
+| `dotnet aicraft rename` | Safe rename across solution (with `--dry-run`) |
+| `dotnet aicraft impls` | Implementations of interface/abstract member |
+| `dotnet aicraft callers` | All callers of a method |
+| `dotnet aicraft symbols` | Search symbols by name pattern |
+| `dotnet aicraft server status` | Daemon status |
+| `dotnet aicraft server reload` | Reload solution |
+| `dotnet aicraft server stop` | Stop daemon |
 
 All commands output **JSON to stdout**. Daemon logs go to **stderr** so they
 don't interfere with JSON parsing.
@@ -183,15 +183,15 @@ don't interfere with JSON parsing.
 ## Building from source
 
 ```bash
-git clone https://github.com/yourusername/dotnet-ai
-cd dotnet-ai
+git clone https://github.com/yourusername/dotnet-aicraft
+cd dotnet-aicraft
 
 dotnet restore
 dotnet build -c Release
 
 # Install locally for testing
-dotnet pack src/DotnetAi/DotnetAi.csproj -c Release -o ./nupkg
-dotnet tool install -g --add-source ./nupkg dotnet-ai
+dotnet pack src/DotnetAICraft/DotnetAICraft.csproj -c Release -o ./nupkg
+dotnet tool install -g --add-source ./nupkg dotnet-aicraft
 
 # Run tests
 dotnet test

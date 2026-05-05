@@ -36,15 +36,15 @@ jobs:
       - name: Restore & Build
         run: |
           dotnet tool restore
-          dotnet restore dotnet-ai.sln
-          dotnet build dotnet-ai.sln -c Release --no-restore
+          dotnet restore dotnet-aicraft.sln
+          dotnet build dotnet-aicraft.sln -c Release --no-restore
 
       - name: Test
-        run: dotnet test dotnet-ai.sln -c Release --no-build
+        run: dotnet test dotnet-aicraft.sln -c Release --no-build
 
       - name: Security gate - vulnerable packages
         run: |
-          dotnet list dotnet-ai.sln package --vulnerable --include-transitive --format json > vulnerabilities.json
+          dotnet list dotnet-aicraft.sln package --vulnerable --include-transitive --format json > vulnerabilities.json
           python - <<'PY'
           import json
           import sys
@@ -76,12 +76,12 @@ jobs:
           PY
 
       - name: Pack
-        run: dotnet pack src/DotnetAI/DotnetAI.csproj -c Release --no-build -p:Version="${{ steps.version.outputs.VERSION }}" --output ./nupkg
+        run: dotnet pack src/DotnetAICraft/DotnetAICraft.csproj -c Release --no-build -p:Version="${{ steps.version.outputs.VERSION }}" --output ./nupkg
 
       - name: Generate SBOM (CycloneDX)
         run: |
           mkdir -p ./artifacts/sbom
-          dotnet tool run dotnet-CycloneDX dotnet-ai.sln \
+          dotnet tool run dotnet-CycloneDX dotnet-aicraft.sln \
             -o ./artifacts/sbom \
             -F Json \
             -fn bom.cdx.json

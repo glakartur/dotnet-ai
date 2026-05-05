@@ -38,7 +38,7 @@ Obecny daemon działa do ręcznego zatrzymania lub restartu systemu, co przy dł
 ## Acceptance Examples
 
 - AE1. **Covers R1, R3.** Given daemon działa z ustawieniami domyślnymi i nie ma nowych wywołań, when mija 60 minut bezczynności, daemon automatycznie się zamyka.
-- AE2. **Covers R2.** Given pozostała 1 minuta do auto-zamknięcia, when użytkownik wykona nowe polecenie `dotnet ai`, licznik bezczynności startuje od nowa.
+- AE2. **Covers R2.** Given pozostała 1 minuta do auto-zamknięcia, when użytkownik wykona nowe polecenie `dotnet aicraft`, licznik bezczynności startuje od nowa.
 - AE3. **Covers R4, R5.** Given użytkownik uruchamia polecenie z parametrem timeoutu (np. 15 minut), when daemon pozostaje bezczynny, then zamyka się po 15 minutach, a nie po 60.
 - AE4. **Covers R6.** Given użytkownik ustawia timeout na `off`, when daemon jest bezczynny dłużej niż 60 minut, then daemon nie zamyka się automatycznie.
 - AE5. **Covers R7.** Given użytkownik poda niepoprawną wartość timeoutu, when polecenie zostanie wykonane, then system zwraca błąd walidacji i zachowuje dotychczasowy timeout sesji.

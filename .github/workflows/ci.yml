@@ -23,13 +23,13 @@ jobs:
           dotnet-version: '9.x'
 
       - name: Restore
-        run: dotnet restore dotnet-ai.sln
+        run: dotnet restore dotnet-aicraft.sln
 
       - name: Build
-        run: dotnet build dotnet-ai.sln -c Release --no-restore
+        run: dotnet build dotnet-aicraft.sln -c Release --no-restore
 
       - name: Test
-        run: dotnet test dotnet-ai.sln -c Release --no-build --verbosity normal
+        run: dotnet test dotnet-aicraft.sln -c Release --no-build --verbosity normal
 
       - name: Pack (verify tool packs correctly)
-        run: dotnet pack src/DotnetAI/DotnetAI.csproj -c Release --no-build --output ./nupkg
+        run: dotnet pack src/DotnetAICraft/DotnetAICraft.csproj -c Release --no-build --output ./nupkg
