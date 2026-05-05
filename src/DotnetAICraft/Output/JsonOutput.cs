@@ -13,6 +13,14 @@ public static class JsonOutput
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
     };
 
+    // Compact (no indentation) for line-delimited daemon protocol
+    private static readonly JsonSerializerOptions WireOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
+    };
+
     public static void Write<T>(T data)
         => Console.WriteLine(JsonSerializer.Serialize(data, Options));
 
@@ -20,7 +28,7 @@ public static class JsonOutput
         => Write(new { error = new { code, message, details } });
 
     public static string Serialize<T>(T data)
-        => JsonSerializer.Serialize(data, Options);
+        => JsonSerializer.Serialize(data, WireOptions);
 
     public static T? Deserialize<T>(string json)
         => JsonSerializer.Deserialize<T>(json, Options);

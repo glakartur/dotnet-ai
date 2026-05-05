@@ -125,6 +125,15 @@ public sealed class DaemonServer : IAsyncDisposable
         catch (Exception ex)
         {
             Log($"Client error: {ex.Message}");
+            try
+            {
+                var errResponse = new DaemonResponse(
+                    "", false, null,
+                    new ErrorInfo("INTERNAL_ERROR", ex.Message),
+                    null);
+                await writer.WriteLineAsync(JsonOutput.Serialize(errResponse).AsMemory(), CancellationToken.None);
+            }
+            catch { /* best-effort; connection may already be broken */ }
         }
         finally
         {
