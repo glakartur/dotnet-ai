@@ -185,12 +185,13 @@ public sealed class DaemonServer : IAsyncDisposable
         var p = GetParams(req);
         var solution = GetSolution();
 
-        ISymbol symbol = p.TryGetValue("symbol", out var sym) && sym is not null
-            ? await SymbolResolver.FromFullNameAsync(solution, sym.ToString()!, ct)
+        var symbolName = GetOptionalString(p, "symbol");
+        ISymbol symbol = symbolName is not null
+            ? await SymbolResolver.FromFullNameAsync(solution, symbolName, ct)
             : await SymbolResolver.FromLocationAsync(solution,
-                p["file"].ToString()!,
-                int.Parse(p["line"].ToString()!),
-                int.Parse(p["col"].ToString()!), ct);
+                GetRequiredString(p, "file"),
+                GetRequiredInt(p, "line"),
+                GetRequiredInt(p, "col"), ct);
 
         var refs = await SymbolFinder.FindReferencesAsync(symbol, solution, ct);
 
@@ -209,15 +210,16 @@ public sealed class DaemonServer : IAsyncDisposable
     {
         var p        = GetParams(req);
         var solution = GetSolution();
-        var newName  = p["to"].ToString()!;
+        var newName  = GetRequiredString(p, "to");
         var dryRun   = p.TryGetValue("dryRun", out var dr) && dr?.ToString() == "True";
 
-        ISymbol symbol = p.TryGetValue("symbol", out var sym) && sym is not null
-            ? await SymbolResolver.FromFullNameAsync(solution, sym.ToString()!, ct)
+        var symbolName = GetOptionalString(p, "symbol");
+        ISymbol symbol = symbolName is not null
+            ? await SymbolResolver.FromFullNameAsync(solution, symbolName, ct)
             : await SymbolResolver.FromLocationAsync(solution,
-                p["file"].ToString()!,
-                int.Parse(p["line"].ToString()!),
-                int.Parse(p["col"].ToString()!), ct);
+                GetRequiredString(p, "file"),
+                GetRequiredInt(p, "line"),
+                GetRequiredInt(p, "col"), ct);
 
         var oldName = symbol.Name;
         var newSolution = await Renamer.RenameSymbolAsync(
@@ -244,7 +246,7 @@ public sealed class DaemonServer : IAsyncDisposable
                     Line:    linePos.Line + 1,
                     Col:     linePos.Character + 1,
                     OldText: oldTextSegment,
-                    NewText: change.NewText));
+                    NewText: change.NewText ?? string.Empty));
             }
         }
 
@@ -274,7 +276,7 @@ public sealed class DaemonServer : IAsyncDisposable
         var solution = GetSolution();
 
         var symbol = await SymbolResolver.FromFullNameAsync(
-            solution, p["symbol"].ToString()!, ct);
+            solution, GetRequiredString(p, "symbol"), ct);
 
         var impls = symbol is INamedTypeSymbol namedType
             ? await SymbolFinder.FindImplementationsAsync(namedType, solution, transitive: false, projects: null, ct)
@@ -288,12 +290,13 @@ public sealed class DaemonServer : IAsyncDisposable
         var p        = GetParams(req);
         var solution = GetSolution();
 
-        var symbol = p.TryGetValue("symbol", out var sym) && sym is not null
-            ? await SymbolResolver.FromFullNameAsync(solution, sym.ToString()!, ct)
+        var symbolName = GetOptionalString(p, "symbol");
+        var symbol = symbolName is not null
+            ? await SymbolResolver.FromFullNameAsync(solution, symbolName, ct)
             : await SymbolResolver.FromLocationAsync(solution,
-                p["file"].ToString()!,
-                int.Parse(p["line"].ToString()!),
-                int.Parse(p["col"].ToString()!), ct);
+                GetRequiredString(p, "file"),
+                GetRequiredInt(p, "line"),
+                GetRequiredInt(p, "col"), ct);
 
         var callers = await SymbolFinder.FindCallersAsync(symbol, solution, ct);
 
@@ -655,6 +658,35 @@ public sealed class DaemonServer : IAsyncDisposable
         var json = JsonOutput.Serialize(req.Params);
         return JsonOutput.Deserialize<Dictionary<string, object?>>(json)
                ?? new Dictionary<string, object?>();
+    }
+
+    private static string? GetOptionalString(Dictionary<string, object?> parameters, string key)
+    {
+        return parameters.TryGetValue(key, out var value)
+            ? value?.ToString()
+            : null;
+    }
+
+    private static string GetRequiredString(Dictionary<string, object?> parameters, string key)
+    {
+        var value = GetOptionalString(parameters, key);
+        if (!string.IsNullOrWhiteSpace(value))
+            return value;
+
+        throw new DaemonValidationException(new ErrorInfo(
+            "INVALID_PARAMS",
+            $"Missing or invalid '{key}' parameter."));
+    }
+
+    private static int GetRequiredInt(Dictionary<string, object?> parameters, string key)
+    {
+        var raw = GetRequiredString(parameters, key);
+        if (int.TryParse(raw, out var parsed))
+            return parsed;
+
+        throw new DaemonValidationException(new ErrorInfo(
+            "INVALID_PARAMS",
+            $"Parameter '{key}' must be an integer."));
     }
 
     private void Log(string message)

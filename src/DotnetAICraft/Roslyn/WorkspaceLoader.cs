@@ -17,11 +17,11 @@ public static class WorkspaceLoader
         });
 
         // Surface workspace diagnostics to stderr (not stdout — stdout is reserved for JSON)
-        workspace.WorkspaceFailed += (_, e) =>
+        workspace.RegisterWorkspaceFailedHandler(e =>
         {
             var kind = e.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure ? "ERR" : "WRN";
             Console.Error.WriteLine($"[workspace:{kind}] {e.Diagnostic.Message}");
-        };
+        });
 
         Solution solution;
         var ext = Path.GetExtension(path).ToLowerInvariant();
