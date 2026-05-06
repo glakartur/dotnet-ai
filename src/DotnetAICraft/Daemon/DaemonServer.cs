@@ -29,6 +29,10 @@ public sealed class DaemonServer : IAsyncDisposable
 
     private const string DiagnosticsSeverityAcceptedValues = "all | error | warning | info | hidden";
 
+    public const int SymbolsDefaultLimit = 200;
+    public const int SymbolsDefaultOffset = 0;
+    public const int SymbolsMaxLimit = 2000;
+
     public DaemonServer(string solutionPath)
     {
         _solutionPath = Path.GetFullPath(solutionPath);
@@ -342,6 +346,8 @@ public sealed class DaemonServer : IAsyncDisposable
         var p       = GetParams(req);
         var pattern = p.TryGetValue("pattern", out var pat) ? pat?.ToString() ?? "*" : "*";
         var kind    = p.TryGetValue("kind", out var k) ? k?.ToString() ?? "all" : "all";
+        var limit   = GetOptionalInt(p, "limit");
+        var offset  = GetOptionalInt(p, "offset");
 
         var filter = kind.ToLower() switch
         {
@@ -351,14 +357,7 @@ public sealed class DaemonServer : IAsyncDisposable
             _ => SymbolFilter.All
         };
 
-        var results = new List<Models.SymbolResult>();
-        await foreach (var symbol in SymbolResolver.SearchAsync(GetSolution(), pattern, filter, ct))
-        {
-            results.Add(SymbolToResult(symbol));
-            if (results.Count >= 200) break; // safety limit
-        }
-
-        return results;
+        return await CollectSymbolsAsync(GetSolution(), pattern, filter, limit, offset, ct);
     }
 
     private async Task<object> HandleDiagnosticsAsync(DaemonRequest req, CancellationToken ct)
@@ -737,6 +736,77 @@ public sealed class DaemonServer : IAsyncDisposable
                 severity = null;
                 return false;
         }
+    }
+
+    public static bool TryNormalizeSymbolsPagination(
+        int? limit,
+        int? offset,
+        out int normalizedLimit,
+        out int normalizedOffset,
+        out ErrorInfo? error)
+    {
+        normalizedLimit = limit ?? SymbolsDefaultLimit;
+        normalizedOffset = offset ?? SymbolsDefaultOffset;
+
+        if (normalizedLimit <= 0)
+        {
+            error = new ErrorInfo(
+                "INVALID_PARAMS",
+                "Parameter 'limit' must be greater than 0.",
+                new { min = 1, max = SymbolsMaxLimit, @default = SymbolsDefaultLimit });
+            return false;
+        }
+
+        if (normalizedOffset < 0)
+        {
+            error = new ErrorInfo(
+                "INVALID_PARAMS",
+                "Parameter 'offset' must be greater than or equal to 0.",
+                new { min = 0, @default = SymbolsDefaultOffset });
+            return false;
+        }
+
+        if (normalizedLimit > SymbolsMaxLimit)
+            normalizedLimit = SymbolsMaxLimit;
+
+        error = null;
+        return true;
+    }
+
+    public static async Task<Models.SymbolsResultPage> CollectSymbolsAsync(
+        Solution solution,
+        string pattern,
+        SymbolFilter filter = SymbolFilter.All,
+        int? limit = null,
+        int? offset = null,
+        CancellationToken ct = default)
+    {
+        if (!TryNormalizeSymbolsPagination(limit, offset, out var normalizedLimit, out var normalizedOffset, out var error))
+            throw new DaemonValidationException(error!);
+
+        var results = new List<Models.SymbolResult>(normalizedLimit);
+        var skipped = 0;
+        var hasMore = false;
+
+        await foreach (var symbol in SymbolResolver.SearchAsync(solution, pattern, filter, ct))
+        {
+            if (skipped < normalizedOffset)
+            {
+                skipped++;
+                continue;
+            }
+
+            if (results.Count < normalizedLimit)
+            {
+                results.Add(SymbolToResult(symbol));
+                continue;
+            }
+
+            hasMore = true;
+            break;
+        }
+
+        return new Models.SymbolsResultPage(results, hasMore);
     }
 
     public static async Task<IReadOnlyList<Models.DiagnosticResult>> CollectDiagnosticsAsync(

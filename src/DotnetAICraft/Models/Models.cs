@@ -30,6 +30,10 @@ public record SymbolResult(
     string? ContainingType,
     string? ContainingNamespace);
 
+public record SymbolsResultPage(
+    IReadOnlyList<SymbolResult> Items,
+    bool HasMore);
+
 public record DefinitionResult(
     string FullName,
     string Kind,

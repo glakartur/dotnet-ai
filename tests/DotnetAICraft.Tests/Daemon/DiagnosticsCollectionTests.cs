@@ -131,3 +131,129 @@ public class DiagnosticsCollectionTests
         public void Dispose() => Workspace.Dispose();
     }
 }
+
+public class SymbolsPaginationTests
+{
+    [Fact]
+    public void TryNormalizeSymbolsPagination_DefaultsAndCap_AreApplied()
+    {
+        var defaultsOk = DaemonServer.TryNormalizeSymbolsPagination(
+            limit: null,
+            offset: null,
+            out var defaultLimit,
+            out var defaultOffset,
+            out var defaultError);
+
+        Assert.True(defaultsOk);
+        Assert.Null(defaultError);
+        Assert.Equal(DaemonServer.SymbolsDefaultLimit, defaultLimit);
+        Assert.Equal(DaemonServer.SymbolsDefaultOffset, defaultOffset);
+
+        var cappedOk = DaemonServer.TryNormalizeSymbolsPagination(
+            limit: DaemonServer.SymbolsMaxLimit + 500,
+            offset: 10,
+            out var cappedLimit,
+            out var cappedOffset,
+            out var cappedError);
+
+        Assert.True(cappedOk);
+        Assert.Null(cappedError);
+        Assert.Equal(DaemonServer.SymbolsMaxLimit, cappedLimit);
+        Assert.Equal(10, cappedOffset);
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(-1, 0)]
+    [InlineData(1, -1)]
+    public void TryNormalizeSymbolsPagination_InvalidValues_ReturnValidationError(int limit, int offset)
+    {
+        var ok = DaemonServer.TryNormalizeSymbolsPagination(limit, offset, out _, out _, out var error);
+
+        Assert.False(ok);
+        Assert.NotNull(error);
+        Assert.Equal("INVALID_PARAMS", error.Code);
+    }
+
+    [Fact]
+    public async Task CollectSymbolsAsync_LimitOne_ReturnsExactlyOneRecordAndHasMore_WhenMatchesExist()
+    {
+        using var fixture = CreateSymbolsFixture();
+
+        var result = await DaemonServer.CollectSymbolsAsync(
+            fixture.Solution,
+            pattern: "PaginationSymbolType*",
+            filter: SymbolFilter.Type,
+            limit: 1,
+            offset: 0);
+
+        Assert.Single(result.Items);
+        Assert.True(result.HasMore);
+    }
+
+    [Fact]
+    public async Task CollectSymbolsAsync_LargeOffset_ReturnsEmptyListWithoutError()
+    {
+        using var fixture = CreateSymbolsFixture();
+
+        var result = await DaemonServer.CollectSymbolsAsync(
+            fixture.Solution,
+            pattern: "PaginationSymbolType*",
+            filter: SymbolFilter.Type,
+            limit: 10,
+            offset: 10_000);
+
+        Assert.Empty(result.Items);
+        Assert.False(result.HasMore);
+    }
+
+    private static SymbolsFixture CreateSymbolsFixture()
+    {
+        var assemblies = MefHostServices.DefaultAssemblies
+            .Concat(new[]
+            {
+                typeof(CSharpCompilation).Assembly,
+                typeof(CSharpFormattingOptions).Assembly
+            })
+            .Distinct();
+
+        var host = MefHostServices.Create(assemblies);
+        var workspace = new AdhocWorkspace(host);
+        var solution = workspace.CurrentSolution;
+
+        var projectId = ProjectId.CreateNewId(debugName: "SymbolsProject");
+        const string projectName = "SymbolsProject";
+
+        solution = solution.AddProject(projectId, projectName, projectName, LanguageNames.CSharp);
+        solution = solution.AddMetadataReference(
+            projectId,
+            MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
+        solution = solution.AddDocument(
+            DocumentId.CreateNewId(projectId),
+            "Symbols.cs",
+            SourceText.From("""
+namespace Demo;
+
+public class PaginationSymbolTypeAlpha { }
+public class PaginationSymbolTypeBeta { }
+"""),
+            filePath: "/virtual/src/Symbols.cs");
+
+        return new SymbolsFixture(workspace, solution);
+    }
+
+    private sealed class SymbolsFixture : IDisposable
+    {
+        public SymbolsFixture(AdhocWorkspace workspace, Solution solution)
+        {
+            Workspace = workspace;
+            Solution = solution;
+        }
+
+        public AdhocWorkspace Workspace { get; }
+        public Solution Solution { get; }
+
+        public void Dispose() => Workspace.Dispose();
+    }
+}
+
