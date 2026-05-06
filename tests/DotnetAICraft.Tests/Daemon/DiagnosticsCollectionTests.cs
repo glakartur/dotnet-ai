@@ -257,3 +257,191 @@ public class PaginationSymbolTypeBeta { }
     }
 }
 
+public class SymbolsKindMappingTests
+{
+    private static readonly string[] TypeKinds = ["class", "interface", "struct", "enum", "delegate"];
+    private static readonly string[] MemberKinds = ["method", "constructor", "property", "field", "event"];
+
+    [Theory]
+    [InlineData("all", "all", SymbolFilter.All)]
+    [InlineData("type", "type", SymbolFilter.Type)]
+    [InlineData("member", "member", SymbolFilter.Member)]
+    [InlineData("namespace", "namespace", SymbolFilter.Namespace)]
+    [InlineData("class", "class", SymbolFilter.Type)]
+    [InlineData("interface", "interface", SymbolFilter.Type)]
+    [InlineData("struct", "struct", SymbolFilter.Type)]
+    [InlineData("enum", "enum", SymbolFilter.Type)]
+    [InlineData("delegate", "delegate", SymbolFilter.Type)]
+    [InlineData("method", "method", SymbolFilter.Member)]
+    [InlineData("constructor", "constructor", SymbolFilter.Type)]
+    [InlineData("property", "property", SymbolFilter.Member)]
+    [InlineData("field", "field", SymbolFilter.Member)]
+    [InlineData("event", "event", SymbolFilter.Member)]
+    [InlineData(" Method ", "method", SymbolFilter.Member)]
+    public void TryParseSymbolsKind_MapsAllSupportedValues(
+        string input,
+        string expectedNormalized,
+        SymbolFilter expectedFilter)
+    {
+        var ok = DaemonServer.TryParseSymbolsKind(input, out var filter, out var predicate, out var normalized);
+
+        Assert.True(ok);
+        Assert.Equal(expectedNormalized, normalized);
+        Assert.Equal(expectedFilter, filter);
+        Assert.NotNull(predicate);
+    }
+
+    [Theory]
+    [InlineData("class", "KindTargetClass*")]
+    [InlineData("interface", "KindTargetInterface*")]
+    [InlineData("struct", "KindTargetStruct*")]
+    [InlineData("enum", "KindTargetEnum*")]
+    [InlineData("delegate", "KindTargetDelegate*")]
+    [InlineData("method", "KindTargetMethod*")]
+    [InlineData("constructor", "KindTarget*")]
+    [InlineData("property", "KindTargetProperty*")]
+    [InlineData("field", "KindTargetField*")]
+    [InlineData("event", "KindTargetEvent*")]
+    [InlineData("namespace", "KindTargetNamespace*")]
+    public async Task CollectSymbolsAsync_GranularKinds_ReturnOnlyRequestedSubset(string kind, string pattern)
+    {
+        using var fixture = CreateSymbolsKindsFixture();
+
+        var result = await DaemonServer.CollectSymbolsAsync(
+            fixture.Solution,
+            pattern: pattern,
+            kind: kind,
+            limit: 500);
+
+        Assert.NotEmpty(result.Items);
+        Assert.All(result.Items, item => Assert.Equal(kind, item.Kind));
+    }
+
+    [Fact]
+    public async Task CollectSymbolsAsync_TypeAndMember_KeepBackwardCompatibility()
+    {
+        using var fixture = CreateSymbolsKindsFixture();
+
+        var typeResult = await DaemonServer.CollectSymbolsAsync(
+            fixture.Solution,
+            pattern: "KindTarget*",
+            kind: "type",
+            limit: 500);
+
+        Assert.NotEmpty(typeResult.Items);
+        Assert.All(typeResult.Items, item => Assert.Contains(item.Kind, TypeKinds));
+        AssertContainsKind(typeResult.Items, "class");
+        AssertContainsKind(typeResult.Items, "interface");
+        AssertContainsKind(typeResult.Items, "struct");
+        AssertContainsKind(typeResult.Items, "enum");
+        AssertContainsKind(typeResult.Items, "delegate");
+
+        var memberResult = await DaemonServer.CollectSymbolsAsync(
+            fixture.Solution,
+            pattern: "KindTarget*",
+            kind: "member",
+            limit: 500);
+
+        Assert.NotEmpty(memberResult.Items);
+        Assert.All(memberResult.Items, item => Assert.Contains(item.Kind, MemberKinds));
+        AssertContainsKind(memberResult.Items, "method");
+        AssertContainsKind(memberResult.Items, "property");
+        AssertContainsKind(memberResult.Items, "field");
+        AssertContainsKind(memberResult.Items, "event");
+    }
+
+    [Fact]
+    public async Task CollectSymbolsAsync_InvalidKind_ReturnsValidationError()
+    {
+        using var fixture = CreateSymbolsKindsFixture();
+
+        var ex = await Assert.ThrowsAsync<DaemonValidationException>(() =>
+            DaemonServer.CollectSymbolsAsync(
+                fixture.Solution,
+                pattern: "KindTarget*",
+                kind: "invalid-kind"));
+
+        Assert.Equal("INVALID_PARAMS", ex.Error.Code);
+        Assert.Equal("Invalid 'kind' parameter.", ex.Error.Message);
+    }
+
+    private static SymbolsKindsFixture CreateSymbolsKindsFixture()
+    {
+        var assemblies = MefHostServices.DefaultAssemblies
+            .Concat(new[]
+            {
+                typeof(CSharpCompilation).Assembly,
+                typeof(CSharpFormattingOptions).Assembly
+            })
+            .Distinct();
+
+        var host = MefHostServices.Create(assemblies);
+        var workspace = new AdhocWorkspace(host);
+        var solution = workspace.CurrentSolution;
+
+        var projectId = ProjectId.CreateNewId(debugName: "SymbolsKindsProject");
+        const string projectName = "SymbolsKindsProject";
+
+        solution = solution.AddProject(projectId, projectName, projectName, LanguageNames.CSharp);
+        solution = solution.AddDocument(
+            DocumentId.CreateNewId(projectId),
+            "SymbolsKinds.cs",
+            SourceText.From("""
+namespace KindTargetNamespace;
+
+public delegate void KindTargetDelegate();
+
+public interface KindTargetInterface
+{
+    void KindTargetMethod();
+    KindTargetEnum KindTargetProperty { get; }
+    event KindTargetDelegate KindTargetEvent;
+}
+
+public struct KindTargetStruct
+{
+    public KindTargetEnum KindTargetField;
+    public KindTargetStruct(KindTargetEnum value) => KindTargetField = value;
+    public KindTargetEnum KindTargetProperty { get; set; }
+    public event KindTargetDelegate KindTargetEvent;
+    public void KindTargetMethod() { }
+}
+
+public enum KindTargetEnum
+{
+    KindTargetEnumValue
+}
+
+public class KindTargetClass
+{
+    public KindTargetEnum KindTargetField;
+    public KindTargetClass() { }
+    public KindTargetEnum KindTargetProperty { get; set; }
+    public event KindTargetDelegate KindTargetEvent;
+    public void KindTargetMethod() { }
+}
+"""),
+            filePath: "/virtual/src/SymbolsKinds.cs");
+
+        return new SymbolsKindsFixture(workspace, solution);
+    }
+
+    private static void AssertContainsKind(IReadOnlyList<DotnetAICraft.Models.SymbolResult> items, string kind)
+        => Assert.Contains(items, item => string.Equals(item.Kind, kind, StringComparison.Ordinal));
+
+    private sealed class SymbolsKindsFixture : IDisposable
+    {
+        public SymbolsKindsFixture(AdhocWorkspace workspace, Solution solution)
+        {
+            Workspace = workspace;
+            Solution = solution;
+        }
+
+        public AdhocWorkspace Workspace { get; }
+        public Solution Solution { get; }
+
+        public void Dispose() => Workspace.Dispose();
+    }
+}
+
+

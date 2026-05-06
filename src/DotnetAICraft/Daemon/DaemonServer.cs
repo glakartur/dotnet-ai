@@ -28,6 +28,38 @@ public sealed class DaemonServer : IAsyncDisposable
     private int _activeRequests;
 
     private const string DiagnosticsSeverityAcceptedValues = "all | error | warning | info | hidden";
+    public const string SymbolsKindAcceptedValues = "all | type | member | namespace | class | interface | struct | enum | delegate | method | constructor | property | field | event";
+
+    private static readonly Func<ISymbol, bool> AnySymbolPredicate = static _ => true;
+    private static readonly Func<ISymbol, IEnumerable<ISymbol>> IdentitySymbolExpander = static symbol => [symbol];
+
+    private readonly record struct SymbolsKindDefinition(
+        SymbolFilter Filter,
+        Func<ISymbol, IEnumerable<ISymbol>> Expand,
+        Func<ISymbol, bool> Predicate);
+
+    private static readonly IReadOnlyDictionary<string, SymbolsKindDefinition> SymbolsKindDefinitions =
+        new Dictionary<string, SymbolsKindDefinition>(StringComparer.Ordinal)
+        {
+            ["all"] = new(SymbolFilter.All, IdentitySymbolExpander, AnySymbolPredicate),
+            ["type"] = new(SymbolFilter.Type, IdentitySymbolExpander, AnySymbolPredicate),
+            ["member"] = new(SymbolFilter.Member, IdentitySymbolExpander, AnySymbolPredicate),
+            ["namespace"] = new(SymbolFilter.Namespace, IdentitySymbolExpander, AnySymbolPredicate),
+            ["class"] = new(SymbolFilter.Type, IdentitySymbolExpander, static symbol => symbol is INamedTypeSymbol { TypeKind: TypeKind.Class }),
+            ["interface"] = new(SymbolFilter.Type, IdentitySymbolExpander, static symbol => symbol is INamedTypeSymbol { TypeKind: TypeKind.Interface }),
+            ["struct"] = new(SymbolFilter.Type, IdentitySymbolExpander, static symbol => symbol is INamedTypeSymbol { TypeKind: TypeKind.Struct }),
+            ["enum"] = new(SymbolFilter.Type, IdentitySymbolExpander, static symbol => symbol is INamedTypeSymbol { TypeKind: TypeKind.Enum }),
+            ["delegate"] = new(SymbolFilter.Type, IdentitySymbolExpander, static symbol => symbol is INamedTypeSymbol { TypeKind: TypeKind.Delegate }),
+            ["method"] = new(SymbolFilter.Member, IdentitySymbolExpander, static symbol =>
+                symbol is IMethodSymbol method &&
+                method.MethodKind is not MethodKind.Constructor and not MethodKind.StaticConstructor),
+            ["constructor"] = new(SymbolFilter.Type, ExpandConstructors, static symbol =>
+                symbol is IMethodSymbol method &&
+                method.MethodKind is MethodKind.Constructor or MethodKind.StaticConstructor),
+            ["property"] = new(SymbolFilter.Member, IdentitySymbolExpander, static symbol => symbol is IPropertySymbol),
+            ["field"] = new(SymbolFilter.Member, IdentitySymbolExpander, static symbol => symbol is IFieldSymbol),
+            ["event"] = new(SymbolFilter.Member, IdentitySymbolExpander, static symbol => symbol is IEventSymbol)
+        };
 
     public const int SymbolsDefaultLimit = 200;
     public const int SymbolsDefaultOffset = 0;
@@ -349,15 +381,7 @@ public sealed class DaemonServer : IAsyncDisposable
         var limit   = GetOptionalInt(p, "limit");
         var offset  = GetOptionalInt(p, "offset");
 
-        var filter = kind.ToLower() switch
-        {
-            "type"   => SymbolFilter.Type,
-            "member" => SymbolFilter.Member,
-            "namespace" => SymbolFilter.Namespace,
-            _ => SymbolFilter.All
-        };
-
-        return await CollectSymbolsAsync(GetSolution(), pattern, filter, limit, offset, ct);
+        return await CollectSymbolsAsync(GetSolution(), pattern, kind, limit, offset, ct);
     }
 
     private async Task<object> HandleDiagnosticsAsync(DaemonRequest req, CancellationToken ct)
@@ -738,6 +762,54 @@ public sealed class DaemonServer : IAsyncDisposable
         }
     }
 
+    private static bool TryGetSymbolsKindDefinition(
+        string? raw,
+        out SymbolsKindDefinition definition,
+        out string normalized)
+    {
+        normalized = string.IsNullOrWhiteSpace(raw)
+            ? "all"
+            : raw.Trim().ToLowerInvariant();
+
+        return SymbolsKindDefinitions.TryGetValue(normalized, out definition);
+    }
+
+    private static IEnumerable<ISymbol> ExpandConstructors(ISymbol symbol)
+    {
+        if (symbol is not INamedTypeSymbol namedType)
+            yield break;
+
+        foreach (var constructor in namedType.Constructors)
+        {
+            if (!constructor.IsImplicitlyDeclared)
+                yield return constructor;
+        }
+    }
+
+    public static bool TryParseSymbolsKind(
+        string? raw,
+        out SymbolFilter filter,
+        out Func<ISymbol, bool> predicate,
+        out string normalized)
+    {
+        if (TryGetSymbolsKindDefinition(raw, out var definition, out normalized))
+        {
+            filter = definition.Filter;
+            predicate = definition.Predicate;
+            return true;
+        }
+
+        filter = SymbolFilter.All;
+        predicate = AnySymbolPredicate;
+        return false;
+    }
+
+    private static ErrorInfo BuildInvalidSymbolsKindError()
+        => new(
+            "INVALID_PARAMS",
+            "Invalid 'kind' parameter.",
+            new { acceptedValues = SymbolsKindAcceptedValues });
+
     public static bool TryNormalizeSymbolsPagination(
         int? limit,
         int? offset,
@@ -776,34 +848,88 @@ public sealed class DaemonServer : IAsyncDisposable
     public static async Task<Models.SymbolsResultPage> CollectSymbolsAsync(
         Solution solution,
         string pattern,
-        SymbolFilter filter = SymbolFilter.All,
+        string? kind,
         int? limit = null,
         int? offset = null,
         CancellationToken ct = default)
     {
+        if (!TryGetSymbolsKindDefinition(kind, out var definition, out _))
+            throw new DaemonValidationException(BuildInvalidSymbolsKindError());
+
+        return await CollectSymbolsAsyncCore(
+            solution,
+            pattern,
+            definition.Filter,
+            definition.Expand,
+            definition.Predicate,
+            limit,
+            offset,
+            ct);
+    }
+
+    public static async Task<Models.SymbolsResultPage> CollectSymbolsAsync(
+        Solution solution,
+        string pattern,
+        SymbolFilter filter = SymbolFilter.All,
+        Func<ISymbol, bool>? predicate = null,
+        int? limit = null,
+        int? offset = null,
+        CancellationToken ct = default)
+    {
+        return await CollectSymbolsAsyncCore(
+            solution,
+            pattern,
+            filter,
+            IdentitySymbolExpander,
+            predicate,
+            limit,
+            offset,
+            ct);
+    }
+
+    private static async Task<Models.SymbolsResultPage> CollectSymbolsAsyncCore(
+        Solution solution,
+        string pattern,
+        SymbolFilter filter,
+        Func<ISymbol, IEnumerable<ISymbol>> expand,
+        Func<ISymbol, bool>? predicate,
+        int? limit,
+        int? offset,
+        CancellationToken ct)
+    {
         if (!TryNormalizeSymbolsPagination(limit, offset, out var normalizedLimit, out var normalizedOffset, out var error))
             throw new DaemonValidationException(error!);
 
+        var matchesKind = predicate ?? AnySymbolPredicate;
         var results = new List<Models.SymbolResult>(normalizedLimit);
         var skipped = 0;
         var hasMore = false;
 
         await foreach (var symbol in SymbolResolver.SearchAsync(solution, pattern, filter, ct))
         {
-            if (skipped < normalizedOffset)
+            foreach (var candidate in expand(symbol))
             {
-                skipped++;
-                continue;
+                if (!matchesKind(candidate))
+                    continue;
+
+                if (skipped < normalizedOffset)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                if (results.Count < normalizedLimit)
+                {
+                    results.Add(SymbolToResult(candidate));
+                    continue;
+                }
+
+                hasMore = true;
+                break;
             }
 
-            if (results.Count < normalizedLimit)
-            {
-                results.Add(SymbolToResult(symbol));
-                continue;
-            }
-
-            hasMore = true;
-            break;
+            if (hasMore)
+                break;
         }
 
         return new Models.SymbolsResultPage(results, hasMore);

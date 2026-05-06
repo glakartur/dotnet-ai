@@ -16,7 +16,7 @@ public static class SymbolsCommand
 
         var kindOpt = new Option<string>("--kind")
         {
-            Description = "Symbol kind filter: all | type | member | namespace",
+            Description = $"Symbol kind filter: {DaemonServer.SymbolsKindAcceptedValues}",
             DefaultValueFactory = _ => "all"
         };
 
@@ -46,6 +46,15 @@ public static class SymbolsCommand
             var offset = parseResult.GetRequiredValue(offsetOpt);
             var idleTimeout = parseResult.GetValue(idleTimeoutOption);
 
+            if (!DaemonServer.TryParseSymbolsKind(kind, out _, out _, out var normalizedKind))
+            {
+                JsonOutput.WriteError(
+                    "INVALID_PARAMS",
+                    "Invalid 'kind' parameter.",
+                    new { acceptedValues = DaemonServer.SymbolsKindAcceptedValues });
+                return;
+            }
+
             if (!DaemonServer.TryNormalizeSymbolsPagination(limit, offset, out var normalizedLimit, out var normalizedOffset, out var paginationError))
             {
                 JsonOutput.WriteError(
@@ -64,7 +73,7 @@ public static class SymbolsCommand
                 var res = await client.SendAsync("symbols", new
                 {
                     pattern,
-                    kind,
+                    kind = normalizedKind,
                     limit = normalizedLimit,
                     offset = normalizedOffset
                 });

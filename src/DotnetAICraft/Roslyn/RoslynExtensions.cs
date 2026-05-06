@@ -1,4 +1,4 @@
-using Microsoft.CodeAnalysis;
+﻿using Microsoft.CodeAnalysis;
 
 namespace DotnetAICraft.Roslyn;
 
@@ -11,7 +11,7 @@ public static class RoslynExtensions
         INamedTypeSymbol { TypeKind: TypeKind.Struct }    => "struct",
         INamedTypeSymbol { TypeKind: TypeKind.Enum }      => "enum",
         INamedTypeSymbol { TypeKind: TypeKind.Delegate }  => "delegate",
-        IMethodSymbol { MethodKind: MethodKind.Constructor } => "constructor",
+        IMethodSymbol { MethodKind: MethodKind.Constructor or MethodKind.StaticConstructor } => "constructor",
         IMethodSymbol                                        => "method",
         IPropertySymbol                                      => "property",
         IFieldSymbol                                         => "field",

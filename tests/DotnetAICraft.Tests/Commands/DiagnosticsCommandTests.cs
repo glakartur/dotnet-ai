@@ -60,6 +60,17 @@ public class SymbolsCommandTests
     }
 
     [Fact]
+    public void Build_KindOptionDescription_ListsGranularKinds()
+    {
+        var command = SymbolsCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption());
+        var kindOption = GetOption<string>(command, "--kind");
+
+        Assert.Contains("constructor", kindOption.Description, StringComparison.Ordinal);
+        Assert.Contains("interface", kindOption.Description, StringComparison.Ordinal);
+        Assert.Contains("event", kindOption.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Parse_UsesProvidedLimitAndOffsetValues()
     {
         var command = SymbolsCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption());
