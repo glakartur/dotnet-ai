@@ -4,6 +4,7 @@ using DotnetAICraft.Models;
 using DotnetAICraft.Output;
 using DotnetAICraft.Roslyn;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.CodeAnalysis.MSBuild;
 using Microsoft.CodeAnalysis.Rename;
@@ -29,6 +30,11 @@ public sealed class DaemonServer : IAsyncDisposable
 
     private const string DiagnosticsSeverityAcceptedValues = "all | error | warning | info | hidden";
     public const string SymbolsKindAcceptedValues = "all | type | member | namespace | class | interface | struct | enum | delegate | method | constructor | property | field | event";
+    public const string CallGraphDirectionAcceptedValues = "incoming | outgoing | both";
+    public const string CallGraphDefaultDirection = "incoming";
+    public const int CallGraphDefaultDepth = 1;
+
+    private static readonly SymbolDisplayFormat CallGraphSymbolDisplayFormat = SymbolDisplayFormat.CSharpErrorMessageFormat;
 
     private static readonly Func<ISymbol, bool> AnySymbolPredicate = static _ => true;
     private static readonly Func<ISymbol, IEnumerable<ISymbol>> IdentitySymbolExpander = static symbol => [symbol];
@@ -37,6 +43,13 @@ public sealed class DaemonServer : IAsyncDisposable
         SymbolFilter Filter,
         Func<ISymbol, IEnumerable<ISymbol>> Expand,
         Func<ISymbol, bool> Predicate);
+
+    private enum CallGraphDirection
+    {
+        Incoming,
+        Outgoing,
+        Both
+    }
 
     private static readonly IReadOnlyDictionary<string, SymbolsKindDefinition> SymbolsKindDefinitions =
         new Dictionary<string, SymbolsKindDefinition>(StringComparer.Ordinal)
@@ -340,10 +353,19 @@ public sealed class DaemonServer : IAsyncDisposable
 
     private async Task<object> HandleCallersAsync(DaemonRequest req, CancellationToken ct)
     {
-        var p        = GetParams(req);
+        var p = GetParams(req);
         var solution = GetSolution();
 
         var symbolName = GetOptionalString(p, "symbol");
+        var directionRaw = GetOptionalString(p, "direction");
+        var depth = GetOptionalInt(p, "depth");
+
+        if (!TryParseCallGraphDirection(directionRaw, out var direction, out var normalizedDirection))
+            throw new DaemonValidationException(BuildInvalidCallGraphDirectionError());
+
+        if (!TryNormalizeCallGraphDepth(depth, out var normalizedDepth, out var depthError))
+            throw new DaemonValidationException(depthError!);
+
         var symbol = symbolName is not null
             ? await SymbolResolver.FromFullNameAsync(solution, symbolName, ct)
             : await SymbolResolver.FromLocationAsync(solution,
@@ -351,27 +373,12 @@ public sealed class DaemonServer : IAsyncDisposable
                 GetRequiredInt(p, "line"),
                 GetRequiredInt(p, "col"), ct);
 
-        var callers = await SymbolFinder.FindCallersAsync(symbol, solution, ct);
+        if (direction is CallGraphDirection.Incoming && normalizedDepth == CallGraphDefaultDepth)
+            return await CollectIncomingCallersAsync(solution, symbol, ct);
 
-        return callers.Select(c =>
-        {
-            var loc = c.Locations.FirstOrDefault();
-            var (file, line, col) = loc is not null
-                ? loc.GetFileLineCol()
-                : ("", 0, 0);
-
-            return new
-            {
-                callerSymbol = c.CallingSymbol.ToDisplayString(),
-                callerKind   = c.CallingSymbol.GetKindName(),
-                isDirect     = c.IsDirect,
-                file,
-                line,
-                col,
-                context      = loc?.GetContextLine() ?? ""
-            };
-        }).ToList();
+        return await CollectCallGraphAsync(solution, symbol, normalizedDirection, normalizedDepth, ct);
     }
+
 
     private async Task<object> HandleSymbolsAsync(DaemonRequest req, CancellationToken ct)
     {
@@ -730,6 +737,264 @@ public sealed class DaemonServer : IAsyncDisposable
         return SymbolToDefinitionResult(resolved);
     }
 
+    public static bool TryParseCallGraphDirection(string? raw, out string normalized)
+        => TryParseCallGraphDirection(raw, out _, out normalized);
+
+    private static bool TryParseCallGraphDirection(
+        string? raw,
+        out CallGraphDirection direction,
+        out string normalized)
+    {
+        normalized = string.IsNullOrWhiteSpace(raw)
+            ? CallGraphDefaultDirection
+            : raw.Trim().ToLowerInvariant();
+
+        switch (normalized)
+        {
+            case "incoming":
+                direction = CallGraphDirection.Incoming;
+                return true;
+            case "outgoing":
+                direction = CallGraphDirection.Outgoing;
+                return true;
+            case "both":
+                direction = CallGraphDirection.Both;
+                return true;
+            default:
+                direction = CallGraphDirection.Incoming;
+                return false;
+        }
+    }
+
+    public static bool TryNormalizeCallGraphDepth(
+        int? depth,
+        out int normalizedDepth,
+        out ErrorInfo? error)
+    {
+        normalizedDepth = depth ?? CallGraphDefaultDepth;
+
+        if (normalizedDepth < 1)
+        {
+            error = new ErrorInfo(
+                "INVALID_PARAMS",
+                "Parameter 'depth' must be greater than or equal to 1.",
+                new { min = 1, @default = CallGraphDefaultDepth });
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    public static async Task<IReadOnlyList<Models.CallerResult>> CollectIncomingCallersAsync(
+        Solution solution,
+        ISymbol symbol,
+        CancellationToken ct = default)
+    {
+        var callers = await SymbolFinder.FindCallersAsync(symbol, solution, ct);
+
+        return callers.Select(c =>
+        {
+            var loc = c.Locations.FirstOrDefault();
+            var (file, line, col) = loc is not null
+                ? loc.GetFileLineCol()
+                : ("", 0, 0);
+
+            return new Models.CallerResult(
+                CallerSymbol: c.CallingSymbol.ToDisplayString(),
+                CallerKind: c.CallingSymbol.GetKindName(),
+                IsDirect: c.IsDirect,
+                File: file,
+                Line: line,
+                Col: col,
+                Context: loc?.GetContextLine() ?? "");
+        }).ToList();
+    }
+
+    public static async Task<Models.CallGraphResult> CollectCallGraphAsync(
+        Solution solution,
+        ISymbol symbol,
+        string? direction = null,
+        int? depth = null,
+        CancellationToken ct = default)
+    {
+        if (!TryParseCallGraphDirection(direction, out var parsedDirection, out _))
+            throw new DaemonValidationException(BuildInvalidCallGraphDirectionError());
+
+        if (!TryNormalizeCallGraphDepth(depth, out var normalizedDepth, out var depthError))
+            throw new DaemonValidationException(depthError!);
+
+        return await CollectCallGraphAsync(solution, symbol, parsedDirection, normalizedDepth, ct);
+    }
+
+    private static async Task<Models.CallGraphResult> CollectCallGraphAsync(
+        Solution solution,
+        ISymbol rootSymbol,
+        CallGraphDirection direction,
+        int depth,
+        CancellationToken ct)
+    {
+        var rootNode = CreateCallGraphNode(rootSymbol);
+        var nodes = new Dictionary<string, Models.CallGraphNode>(StringComparer.Ordinal)
+        {
+            [rootNode.Id] = rootNode
+        };
+
+        var edges = new List<Models.CallGraphEdge>();
+        var edgeKeys = new HashSet<string>(StringComparer.Ordinal);
+
+        var queue = new Queue<(ISymbol Symbol, int CurrentDepth)>();
+        queue.Enqueue((rootSymbol, 0));
+
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+
+        while (queue.Count > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var (currentSymbol, currentDepth) = queue.Dequeue();
+            var currentNode = CreateCallGraphNode(currentSymbol);
+            nodes[currentNode.Id] = currentNode;
+
+            if (currentDepth >= depth)
+                continue;
+
+            if (!visited.Add(currentNode.Id))
+                continue;
+
+            if (direction is CallGraphDirection.Incoming or CallGraphDirection.Both)
+            {
+                var incomingCallers = await SymbolFinder.FindCallersAsync(currentSymbol, solution, ct);
+
+                foreach (var callerInfo in incomingCallers)
+                {
+                    var callerNode = CreateCallGraphNode(callerInfo.CallingSymbol);
+                    nodes[callerNode.Id] = callerNode;
+
+                    AddEdge(callerNode.Id, currentNode.Id, "incoming", callerInfo.IsDirect);
+                    queue.Enqueue((callerInfo.CallingSymbol, currentDepth + 1));
+                }
+            }
+
+            if (direction is CallGraphDirection.Outgoing or CallGraphDirection.Both)
+            {
+                var outgoingCallees = await CollectOutgoingCalleesAsync(solution, currentSymbol, ct);
+
+                foreach (var callee in outgoingCallees)
+                {
+                    var calleeNode = CreateCallGraphNode(callee);
+                    nodes[calleeNode.Id] = calleeNode;
+
+                    AddEdge(currentNode.Id, calleeNode.Id, "outgoing", true);
+                    queue.Enqueue((callee, currentDepth + 1));
+                }
+            }
+        }
+
+        return new Models.CallGraphResult(
+            RootId: rootNode.Id,
+            Direction: direction.ToString().ToLowerInvariant(),
+            Depth: depth,
+            Nodes: nodes.Values
+                .OrderBy(node => node.Id, StringComparer.Ordinal)
+                .ToList(),
+            Edges: edges
+                .OrderBy(edge => edge.From, StringComparer.Ordinal)
+                .ThenBy(edge => edge.To, StringComparer.Ordinal)
+                .ThenBy(edge => edge.Relation, StringComparer.Ordinal)
+                .ToList());
+
+        void AddEdge(string from, string to, string relation, bool isDirect)
+        {
+            var edgeKey = $"{from}|{to}|{relation}|{isDirect}";
+            if (!edgeKeys.Add(edgeKey))
+                return;
+
+            edges.Add(new Models.CallGraphEdge(
+                From: from,
+                To: to,
+                Relation: relation,
+                IsDirect: isDirect));
+        }
+    }
+
+    private static async Task<IReadOnlyList<ISymbol>> CollectOutgoingCalleesAsync(
+        Solution solution,
+        ISymbol symbol,
+        CancellationToken ct)
+    {
+        if (symbol.DeclaringSyntaxReferences.Length == 0)
+            return [];
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var callees = new List<ISymbol>();
+
+        foreach (var syntaxReference in symbol.DeclaringSyntaxReferences)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var syntax = await syntaxReference.GetSyntaxAsync(ct);
+            var document = solution.GetDocument(syntax.SyntaxTree);
+            if (document is null)
+                continue;
+
+            var semanticModel = await document.GetSemanticModelAsync(ct);
+            if (semanticModel is null)
+                continue;
+
+            foreach (var invocation in syntax.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var symbolInfo = semanticModel.GetSymbolInfo(invocation, ct);
+                var invoked = symbolInfo.Symbol ?? symbolInfo.CandidateSymbols.FirstOrDefault();
+                if (invoked is not IMethodSymbol methodSymbol)
+                    continue;
+
+                var key = GetCallGraphSymbolKey(methodSymbol);
+                if (seen.Add(key))
+                    callees.Add(methodSymbol);
+            }
+        }
+
+        return callees;
+    }
+
+    private static Models.CallGraphNode CreateCallGraphNode(ISymbol symbol)
+    {
+        var sourceLocation = symbol.Locations.FirstOrDefault(location => location.IsInSource);
+        var (file, line, col) = sourceLocation is not null
+            ? sourceLocation.GetFileLineCol()
+            : ("", 0, 0);
+
+        return new Models.CallGraphNode(
+            Id: GetCallGraphSymbolKey(symbol),
+            FullName: symbol.ToDisplayString(),
+            Kind: symbol.GetKindName(),
+            File: file,
+            Line: line,
+            Col: col,
+            ContainingType: symbol.ContainingType?.ToDisplayString(),
+            ContainingNamespace: symbol.ContainingNamespace?.ToDisplayString());
+    }
+
+    private static string GetCallGraphSymbolKey(ISymbol symbol)
+        => symbol switch
+        {
+            IMethodSymbol methodSymbol => methodSymbol.OriginalDefinition.ToDisplayString(CallGraphSymbolDisplayFormat),
+            INamedTypeSymbol namedTypeSymbol => namedTypeSymbol.OriginalDefinition.ToDisplayString(CallGraphSymbolDisplayFormat),
+            IPropertySymbol propertySymbol => propertySymbol.OriginalDefinition.ToDisplayString(CallGraphSymbolDisplayFormat),
+            IFieldSymbol fieldSymbol => fieldSymbol.OriginalDefinition.ToDisplayString(CallGraphSymbolDisplayFormat),
+            IEventSymbol eventSymbol => eventSymbol.OriginalDefinition.ToDisplayString(CallGraphSymbolDisplayFormat),
+            _ => symbol.ToDisplayString(CallGraphSymbolDisplayFormat)
+        };
+
+    private static ErrorInfo BuildInvalidCallGraphDirectionError()
+        => new(
+            "INVALID_PARAMS",
+            "Invalid 'direction' parameter.",
+            new { acceptedValues = CallGraphDirectionAcceptedValues });
+
     public static bool TryParseDiagnosticsSeverity(
         string? raw,
         out DiagnosticSeverity? severity,
@@ -761,6 +1026,7 @@ public sealed class DaemonServer : IAsyncDisposable
                 return false;
         }
     }
+
 
     private static bool TryGetSymbolsKindDefinition(
         string? raw,

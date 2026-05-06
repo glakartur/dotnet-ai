@@ -6,6 +6,38 @@ public record ReferenceResult(
     int Col,
     string Context);
 
+public record CallerResult(
+    string CallerSymbol,
+    string CallerKind,
+    bool IsDirect,
+    string File,
+    int Line,
+    int Col,
+    string Context);
+
+public record CallGraphNode(
+    string Id,
+    string FullName,
+    string Kind,
+    string File,
+    int Line,
+    int Col,
+    string? ContainingType,
+    string? ContainingNamespace);
+
+public record CallGraphEdge(
+    string From,
+    string To,
+    string Relation,
+    bool IsDirect);
+
+public record CallGraphResult(
+    string RootId,
+    string Direction,
+    int Depth,
+    IReadOnlyList<CallGraphNode> Nodes,
+    IReadOnlyList<CallGraphEdge> Edges);
+
 public record RenameChange(
     string File,
     int Line,
@@ -88,3 +120,4 @@ public record IdleTimeoutUpdateResult(
     string Mode,
     string? Value,
     bool Changed);
+
