@@ -444,4 +444,250 @@ public class KindTargetClass
     }
 }
 
+public class UnusedCollectionTests
+{
+    [Fact]
+    public async Task CollectUnusedAsync_PrivateMethodWithoutReferences_ReturnsCandidateWithReasonAndConfidence()
+    {
+        using var fixture = CreateFixture();
+
+        var result = await DaemonServer.CollectUnusedAsync(fixture.Solution, kind: "method");
+
+        var candidate = Assert.Single(
+            result.Items,
+            item => item.Symbol.Contains("DeadCodeFixture.PrivateNeverCalled()", StringComparison.Ordinal));
+
+        Assert.NotEmpty(candidate.Reason);
+        Assert.True(candidate.Confidence > 0);
+    }
+
+    [Fact]
+    public async Task CollectUnusedAsync_OverrideMethod_IsExcluded()
+    {
+        using var fixture = CreateFixture();
+
+        var result = await DaemonServer.CollectUnusedAsync(fixture.Solution, kind: "method");
+
+        Assert.DoesNotContain(result.Items, item =>
+            item.Symbol.Contains("DerivedOverride.Execute()", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CollectUnusedAsync_InterfaceImplementation_IsExcluded()
+    {
+        using var fixture = CreateFixture();
+
+        var result = await DaemonServer.CollectUnusedAsync(fixture.Solution, kind: "method");
+
+        Assert.DoesNotContain(result.Items, item =>
+            item.Symbol.Contains("InterfaceImpl.Run()", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CollectUnusedAsync_ProjectAndKindFilters_ReturnOnlyMatchingRecords()
+    {
+        using var fixture = CreateFixture();
+
+        var result = await DaemonServer.CollectUnusedAsync(
+            fixture.Solution,
+            kind: "field",
+            projectFilter: fixture.ProjectAName);
+
+        Assert.NotEmpty(result.Items);
+        Assert.All(result.Items, item =>
+        {
+            Assert.Equal("field", item.Kind);
+            Assert.Equal(fixture.ProjectAName, item.Project);
+        });
+
+        Assert.DoesNotContain(result.Items, item =>
+            string.Equals(item.Project, fixture.ProjectBName, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CollectUnusedAsync_LargerFixture_IsDeterministicAndCompletesWithinBudget()
+    {
+        using var fixture = CreateLargeFixture();
+
+        var startedAt = DateTime.UtcNow;
+        var first = await DaemonServer.CollectUnusedAsync(fixture.Solution, kind: "method");
+        var elapsed = DateTime.UtcNow - startedAt;
+
+        var second = await DaemonServer.CollectUnusedAsync(fixture.Solution, kind: "method");
+
+        Assert.True(elapsed < TimeSpan.FromSeconds(20),
+            $"Unused scan should complete quickly for the fixture. Elapsed: {elapsed.TotalSeconds:F2}s");
+
+        Assert.Equal(first.Scanned, second.Scanned);
+        Assert.Equal(first.Items.Count, second.Items.Count);
+        Assert.Equal(
+            first.Items.Select(ToStableKey),
+            second.Items.Select(ToStableKey));
+    }
+
+    private static string ToStableKey(DotnetAICraft.Models.UnusedCandidateResult item)
+        => $"{item.Symbol}|{item.Project}|{item.File}|{item.Line}|{item.Col}|{item.Confidence:F2}|{item.Reason}";
+
+    private static UnusedFixture CreateFixture()
+    {
+        var assemblies = MefHostServices.DefaultAssemblies
+            .Concat(new[]
+            {
+                typeof(CSharpCompilation).Assembly,
+                typeof(CSharpFormattingOptions).Assembly
+            })
+            .Distinct();
+
+        var host = MefHostServices.Create(assemblies);
+        var workspace = new AdhocWorkspace(host);
+        var solution = workspace.CurrentSolution;
+
+        var projectA = ProjectId.CreateNewId(debugName: "FilterProjectA");
+        var projectB = ProjectId.CreateNewId(debugName: "FilterProjectB");
+
+        const string projectAName = "FilterProjectA";
+        const string projectBName = "FilterProjectB";
+
+        solution = solution.AddProject(projectA, projectAName, projectAName, LanguageNames.CSharp);
+        solution = solution.AddMetadataReference(
+            projectA,
+            MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
+        solution = solution.AddDocument(
+            DocumentId.CreateNewId(projectA),
+            "DeadCodeFixture.cs",
+            SourceText.From("""
+namespace Demo;
+
+public interface IRun
+{
+    void Run();
+}
+
+public class InterfaceImpl : IRun
+{
+    public void Run() { }
+}
+
+public abstract class BaseOverride
+{
+    public virtual void Execute() { }
+}
+
+public class DerivedOverride : BaseOverride
+{
+    public override void Execute() { }
+}
+
+public class DeadCodeFixture
+{
+    private int _unusedField;
+    private int _usedField;
+
+    public DeadCodeFixture()
+    {
+        _usedField = 42;
+    }
+
+    private void PrivateNeverCalled() { }
+
+    private void PrivateUsed()
+    {
+        _ = _usedField;
+    }
+
+    public void Touch()
+    {
+        PrivateUsed();
+    }
+
+    public static void Main(string[] args)
+    {
+    }
+}
+"""),
+            filePath: "/virtual/src/FilterProjectA/DeadCodeFixture.cs");
+
+        solution = solution.AddProject(projectB, projectBName, projectBName, LanguageNames.CSharp);
+        solution = solution.AddMetadataReference(
+            projectB,
+            MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
+        solution = solution.AddDocument(
+            DocumentId.CreateNewId(projectB),
+            "OtherProjectDeadCode.cs",
+            SourceText.From("""
+namespace DemoB;
+
+public class OtherProjectDeadCode
+{
+    private int _unusedFieldInProjectB;
+}
+"""),
+            filePath: "/virtual/src/FilterProjectB/OtherProjectDeadCode.cs");
+
+        return new UnusedFixture(workspace, solution, projectAName, projectBName);
+    }
+
+    private static UnusedFixture CreateLargeFixture()
+    {
+        var assemblies = MefHostServices.DefaultAssemblies
+            .Concat(new[]
+            {
+                typeof(CSharpCompilation).Assembly,
+                typeof(CSharpFormattingOptions).Assembly
+            })
+            .Distinct();
+
+        var host = MefHostServices.Create(assemblies);
+        var workspace = new AdhocWorkspace(host);
+        var solution = workspace.CurrentSolution;
+
+        var projectId = ProjectId.CreateNewId(debugName: "LargeUnusedProject");
+        const string projectName = "LargeUnusedProject";
+
+        var methods = string.Join(Environment.NewLine,
+            Enumerable.Range(0, 180).Select(i => $"    private void UnusedMethod{i}() {{ }}"));
+
+        var source = $@"namespace LargeDemo;
+
+public class LargeDeadCode
+{{
+{methods}
+}}";
+
+        solution = solution.AddProject(projectId, projectName, projectName, LanguageNames.CSharp);
+        solution = solution.AddMetadataReference(
+            projectId,
+            MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
+        solution = solution.AddDocument(
+            DocumentId.CreateNewId(projectId),
+            "LargeDeadCode.cs",
+            SourceText.From(source),
+            filePath: "/virtual/src/LargeUnusedProject/LargeDeadCode.cs");
+
+        return new UnusedFixture(workspace, solution, projectName, projectName);
+    }
+
+    private sealed class UnusedFixture : IDisposable
+    {
+        public UnusedFixture(
+            AdhocWorkspace workspace,
+            Solution solution,
+            string projectAName,
+            string projectBName)
+        {
+            Workspace = workspace;
+            Solution = solution;
+            ProjectAName = projectAName;
+            ProjectBName = projectBName;
+        }
+
+        public AdhocWorkspace Workspace { get; }
+        public Solution Solution { get; }
+        public string ProjectAName { get; }
+        public string ProjectBName { get; }
+
+        public void Dispose() => Workspace.Dispose();
+    }
+}
+
 

@@ -94,6 +94,24 @@ public record DiagnosticResult(
     int? EndLine,
     int? EndCol);
 
+public record UnusedCandidateResult(
+    string Symbol,
+    string Kind,
+    string File,
+    int Line,
+    int Col,
+    string Project,
+    string Reason,
+    double Confidence);
+
+public record UnusedScanSummary(
+    string Kind,
+    string? Project,
+    bool PublicOnly,
+    bool IncludeGenerated,
+    int Scanned,
+    IReadOnlyList<UnusedCandidateResult> Items);
+
 public record ErrorInfo(
     string Code,
     string Message,

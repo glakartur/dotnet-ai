@@ -30,6 +30,7 @@ public sealed class DaemonServer : IAsyncDisposable
 
     private const string DiagnosticsSeverityAcceptedValues = "all | error | warning | info | hidden";
     public const string SymbolsKindAcceptedValues = "all | type | member | namespace | class | interface | struct | enum | delegate | method | constructor | property | field | event";
+    public const string UnusedKindAcceptedValues = SymbolsKindAcceptedValues;
     public const string CallGraphDirectionAcceptedValues = "incoming | outgoing | both";
     public const string CallGraphDefaultDirection = "incoming";
     public const int CallGraphDefaultDepth = 1;
@@ -207,6 +208,7 @@ public sealed class DaemonServer : IAsyncDisposable
                 "callers"  => await HandleCallersAsync(req, ct),
                 "symbols"  => await HandleSymbolsAsync(req, ct),
                 "diagnostics" => await HandleDiagnosticsAsync(req, ct),
+                "unused"   => await HandleUnusedAsync(req, ct),
                 "status"   => HandleStatus(),
                 "reload"   => await HandleReloadAsync(ct),
                 "setIdleTimeout" => HandleSetIdleTimeout(req),
@@ -412,6 +414,24 @@ public sealed class DaemonServer : IAsyncDisposable
             severityFilter,
             projectFilter,
             fileFilter,
+            ct);
+    }
+
+    private async Task<object> HandleUnusedAsync(DaemonRequest req, CancellationToken ct)
+    {
+        var p = GetParams(req);
+
+        var kind = GetOptionalString(p, "kind") ?? "all";
+        var project = GetOptionalString(p, "project");
+        var publicOnly = GetOptionalBool(p, "publicOnly") ?? false;
+        var includeGenerated = GetOptionalBool(p, "includeGenerated") ?? false;
+
+        return await CollectUnusedAsync(
+            GetSolution(),
+            kind,
+            project,
+            publicOnly,
+            includeGenerated,
             ct);
     }
 
@@ -1070,11 +1090,20 @@ public sealed class DaemonServer : IAsyncDisposable
         return false;
     }
 
+    public static bool TryParseUnusedKind(string? raw, out string normalized)
+        => TryGetSymbolsKindDefinition(raw, out _, out normalized);
+
     private static ErrorInfo BuildInvalidSymbolsKindError()
         => new(
             "INVALID_PARAMS",
             "Invalid 'kind' parameter.",
             new { acceptedValues = SymbolsKindAcceptedValues });
+
+    private static ErrorInfo BuildInvalidUnusedKindError()
+        => new(
+            "INVALID_PARAMS",
+            "Invalid 'kind' parameter.",
+            new { acceptedValues = UnusedKindAcceptedValues });
 
     public static bool TryNormalizeSymbolsPagination(
         int? limit,
@@ -1201,6 +1230,97 @@ public sealed class DaemonServer : IAsyncDisposable
         return new Models.SymbolsResultPage(results, hasMore);
     }
 
+    public static async Task<Models.UnusedScanSummary> CollectUnusedAsync(
+        Solution solution,
+        string? kind = null,
+        string? projectFilter = null,
+        bool publicOnly = false,
+        bool includeGenerated = false,
+        CancellationToken ct = default)
+    {
+        if (!TryGetSymbolsKindDefinition(kind, out var definition, out var normalizedKind))
+            throw new DaemonValidationException(BuildInvalidUnusedKindError());
+
+        var normalizedProject = string.IsNullOrWhiteSpace(projectFilter)
+            ? null
+            : projectFilter.Trim();
+
+        var scanned = 0;
+        var results = new List<Models.UnusedCandidateResult>();
+        var seenSymbols = new HashSet<string>(StringComparer.Ordinal);
+
+        await foreach (var symbol in SymbolResolver.SearchAsync(solution, "*", definition.Filter, ct))
+        {
+            foreach (var candidate in definition.Expand(symbol))
+            {
+                ct.ThrowIfCancellationRequested();
+
+                if (!definition.Predicate(candidate))
+                    continue;
+
+                if (!ShouldAnalyzeForUnused(candidate, publicOnly))
+                    continue;
+
+                var symbolKey = GetCallGraphSymbolKey(candidate);
+                if (!seenSymbols.Add(symbolKey))
+                    continue;
+
+                if (ShouldExcludeUnusedByHeuristics(candidate))
+                    continue;
+
+                var sourceLocation = await GetPrimarySourceLocationAsync(candidate, solution, ct);
+                if (sourceLocation is null)
+                    continue;
+
+                if (normalizedProject is not null &&
+                    !string.Equals(sourceLocation.Value.Project, normalizedProject, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (!includeGenerated && sourceLocation.Value.IsGenerated)
+                    continue;
+
+                scanned++;
+
+                var refs = await SymbolFinder.FindReferencesAsync(candidate, solution, ct);
+                var referencesCount = refs.Sum(reference => reference.Locations.Count());
+
+                if (referencesCount > 0)
+                    continue;
+
+                var (reason, confidence) = BuildUnusedReasonAndConfidence(candidate);
+
+                results.Add(new Models.UnusedCandidateResult(
+                    Symbol: candidate.ToDisplayString(),
+                    Kind: candidate.GetKindName(),
+                    File: sourceLocation.Value.File,
+                    Line: sourceLocation.Value.Line,
+                    Col: sourceLocation.Value.Col,
+                    Project: sourceLocation.Value.Project,
+                    Reason: reason,
+                    Confidence: confidence));
+            }
+        }
+
+        var ordered = results
+            .OrderByDescending(r => r.Confidence)
+            .ThenBy(r => r.Project, StringComparer.Ordinal)
+            .ThenBy(r => r.File, StringComparer.Ordinal)
+            .ThenBy(r => r.Line)
+            .ThenBy(r => r.Col)
+            .ThenBy(r => r.Symbol, StringComparer.Ordinal)
+            .ToList();
+
+        return new Models.UnusedScanSummary(
+            Kind: normalizedKind,
+            Project: normalizedProject,
+            PublicOnly: publicOnly,
+            IncludeGenerated: includeGenerated,
+            Scanned: scanned,
+            Items: ordered);
+    }
+
     public static async Task<IReadOnlyList<Models.DiagnosticResult>> CollectDiagnosticsAsync(
         Solution solution,
         DiagnosticSeverity? severityFilter = null,
@@ -1316,6 +1436,258 @@ public sealed class DaemonServer : IAsyncDisposable
         return normalizedDiagnosticPath.EndsWith(normalizedFileFilter, comparison);
     }
 
+    private readonly record struct SourceSymbolLocation(
+        string File,
+        int Line,
+        int Col,
+        string Project,
+        bool IsGenerated);
+
+    private static bool ShouldAnalyzeForUnused(ISymbol symbol, bool publicOnly)
+    {
+        if (symbol.IsImplicitlyDeclared)
+            return false;
+
+        if (symbol.DeclaringSyntaxReferences.Length == 0)
+            return false;
+
+        if (publicOnly && symbol.DeclaredAccessibility != Accessibility.Public)
+            return false;
+
+        if (symbol.ContainingType?.TypeKind == TypeKind.Interface)
+            return false;
+
+        if (symbol is IMethodSymbol method)
+        {
+            if (method.IsAbstract)
+                return false;
+
+            if (method.MethodKind is MethodKind.AnonymousFunction or MethodKind.LocalFunction)
+                return false;
+
+            if (method.MethodKind is MethodKind.PropertyGet or MethodKind.PropertySet or MethodKind.EventAdd or MethodKind.EventRemove or MethodKind.EventRaise)
+                return false;
+        }
+
+        if (symbol is IPropertySymbol { IsAbstract: true } || symbol is IEventSymbol { IsAbstract: true })
+            return false;
+
+        return symbol is not INamespaceSymbol and not IAliasSymbol and not ILocalSymbol and not IParameterSymbol and not ITypeParameterSymbol;
+    }
+
+    private static bool ShouldExcludeUnusedByHeuristics(ISymbol symbol)
+    {
+        if (symbol switch
+            {
+                IMethodSymbol { IsOverride: true } => true,
+                IPropertySymbol { IsOverride: true } => true,
+                IEventSymbol { IsOverride: true } => true,
+                _ => false
+            })
+        {
+            return true;
+        }
+
+        if (ImplementsInterfaceMember(symbol))
+            return true;
+
+        if (symbol is IMethodSymbol method && IsEntryPointMethod(method))
+            return true;
+
+        return false;
+    }
+
+    private static bool ImplementsInterfaceMember(ISymbol symbol)
+    {
+        if (symbol is IMethodSymbol { ExplicitInterfaceImplementations.Length: > 0 })
+            return true;
+
+        if (symbol is IPropertySymbol { ExplicitInterfaceImplementations.Length: > 0 })
+            return true;
+
+        if (symbol is IEventSymbol { ExplicitInterfaceImplementations.Length: > 0 })
+            return true;
+
+        if (symbol is not IMethodSymbol && symbol is not IPropertySymbol && symbol is not IEventSymbol)
+            return false;
+
+        var containingType = symbol.ContainingType;
+        if (containingType is null || containingType.AllInterfaces.IsDefaultOrEmpty)
+            return false;
+
+        var target = symbol.OriginalDefinition;
+
+        foreach (var iface in containingType.AllInterfaces)
+        {
+            foreach (var interfaceMember in iface.GetMembers())
+            {
+                var implementation = containingType.FindImplementationForInterfaceMember(interfaceMember);
+                if (implementation is null)
+                    continue;
+
+                if (SymbolEqualityComparer.Default.Equals(implementation.OriginalDefinition, target))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsEntryPointMethod(IMethodSymbol method)
+    {
+        if (!method.IsStatic || method.MethodKind != MethodKind.Ordinary)
+            return false;
+
+        if (!string.Equals(method.Name, "Main", StringComparison.Ordinal))
+            return false;
+
+        if (!IsValidEntryPointReturnType(method.ReturnType))
+            return false;
+
+        if (method.Parameters.Length == 0)
+            return true;
+
+        if (method.Parameters.Length != 1)
+            return false;
+
+        return method.Parameters[0].Type is IArrayTypeSymbol
+        {
+            Rank: 1,
+            ElementType.SpecialType: SpecialType.System_String
+        };
+    }
+
+    private static bool IsValidEntryPointReturnType(ITypeSymbol returnType)
+    {
+        if (returnType.SpecialType is SpecialType.System_Void or SpecialType.System_Int32)
+            return true;
+
+        if (returnType is not INamedTypeSymbol taskType)
+            return false;
+
+        if (!string.Equals(taskType.Name, "Task", StringComparison.Ordinal))
+            return false;
+
+        if (!string.Equals(taskType.ContainingNamespace?.ToDisplayString(), "System.Threading.Tasks", StringComparison.Ordinal))
+            return false;
+
+        if (!taskType.IsGenericType)
+            return true;
+
+        return taskType.TypeArguments.Length == 1 &&
+               taskType.TypeArguments[0].SpecialType == SpecialType.System_Int32;
+    }
+
+    private static async Task<SourceSymbolLocation?> GetPrimarySourceLocationAsync(
+        ISymbol symbol,
+        Solution solution,
+        CancellationToken ct)
+    {
+        var sourceLocation = symbol.Locations.FirstOrDefault(location => location.IsInSource);
+        if (sourceLocation is null)
+            return null;
+
+        var (file, line, col) = sourceLocation.GetFileLineCol();
+
+        var document = sourceLocation.SourceTree is not null
+            ? solution.GetDocument(sourceLocation.SourceTree)
+            : null;
+
+        if (document is null)
+        {
+            foreach (var syntaxReference in symbol.DeclaringSyntaxReferences)
+            {
+                document = solution.GetDocument(syntaxReference.SyntaxTree);
+                if (document is not null)
+                    break;
+            }
+        }
+
+        if (document?.FilePath is { Length: > 0 } documentPath)
+            file = documentPath;
+
+        if (string.IsNullOrWhiteSpace(file))
+            return null;
+
+        var project = document?.Project.Name ?? symbol.ContainingAssembly?.Name ?? string.Empty;
+        var generated = IsGeneratedFilePath(file);
+
+        if (!generated && document is not null)
+            generated = await ContainsAutoGeneratedMarkerAsync(document, ct);
+
+        return new SourceSymbolLocation(file, line, col, project, generated);
+    }
+
+    private static bool IsGeneratedFilePath(string filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+            return false;
+
+        var normalized = filePath.Replace('\\', '/').ToLowerInvariant();
+
+        if (normalized.Contains("/obj/", StringComparison.Ordinal) ||
+            normalized.Contains("/generated/", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return normalized.EndsWith(".g.cs", StringComparison.Ordinal) ||
+               normalized.EndsWith(".g.i.cs", StringComparison.Ordinal) ||
+               normalized.EndsWith(".designer.cs", StringComparison.Ordinal) ||
+               normalized.EndsWith(".generated.cs", StringComparison.Ordinal) ||
+               normalized.EndsWith(".assemblyattributes.cs", StringComparison.Ordinal) ||
+               normalized.EndsWith(".assemblyinfo.cs", StringComparison.Ordinal) ||
+               normalized.EndsWith(".globalusings.g.cs", StringComparison.Ordinal) ||
+               normalized.EndsWith(".razor.g.cs", StringComparison.Ordinal);
+    }
+
+    private static async Task<bool> ContainsAutoGeneratedMarkerAsync(Document document, CancellationToken ct)
+    {
+        try
+        {
+            var text = await document.GetTextAsync(ct);
+            var maxLines = Math.Min(8, text.Lines.Count);
+
+            for (var i = 0; i < maxLines; i++)
+            {
+                var line = text.Lines[i].ToString();
+                if (line.Contains("<auto-generated", StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains("<autogenerated", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            return false;
+        }
+
+        return false;
+    }
+
+    private static (string Reason, double Confidence) BuildUnusedReasonAndConfidence(ISymbol symbol)
+    {
+        var confidence = symbol.DeclaredAccessibility switch
+        {
+            Accessibility.Private => 0.98,
+            Accessibility.Internal => 0.90,
+            Accessibility.Protected => 0.75,
+            Accessibility.ProtectedAndInternal => 0.72,
+            Accessibility.ProtectedOrInternal => 0.72,
+            Accessibility.Public => 0.60,
+            _ => 0.70
+        };
+
+        var scope = symbol.DeclaredAccessibility.ToString().ToLowerInvariant();
+        var reason = $"No references found for {scope} {symbol.GetKindName()} '{symbol.ToDisplayString()}'.";
+
+        if (symbol.DeclaredAccessibility == Accessibility.Public)
+            reason += " Public symbol may still be used outside the analyzed solution.";
+
+        return (reason, confidence);
+    }
+
     private static Models.DefinitionResult SymbolToDefinitionResult(ISymbol symbol)
     {
         var sourceLocation = symbol.Locations.FirstOrDefault(l => l.IsInSource);
@@ -1388,6 +1760,20 @@ public sealed class DaemonServer : IAsyncDisposable
         throw new DaemonValidationException(new ErrorInfo(
             "INVALID_PARAMS",
             $"Parameter '{key}' must be an integer."));
+    }
+
+    private static bool? GetOptionalBool(Dictionary<string, object?> parameters, string key)
+    {
+        var raw = GetOptionalString(parameters, key);
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        if (bool.TryParse(raw, out var parsed))
+            return parsed;
+
+        throw new DaemonValidationException(new ErrorInfo(
+            "INVALID_PARAMS",
+            $"Parameter '{key}' must be a boolean."));
     }
 
     private static string GetRequiredString(Dictionary<string, object?> parameters, string key)

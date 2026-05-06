@@ -43,5 +43,6 @@ root.Add(ImplsCommand.Build(solutionOption, idleTimeoutOption));
 root.Add(CallersCommand.Build(solutionOption, idleTimeoutOption));
 root.Add(DiagnosticsCommand.Build(solutionOption, idleTimeoutOption));
 root.Add(SymbolsCommand.Build(solutionOption, idleTimeoutOption));
+root.Add(UnusedCommand.Build(solutionOption, idleTimeoutOption));
 
 return await root.Parse(args).InvokeAsync();
