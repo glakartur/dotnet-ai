@@ -1,4 +1,4 @@
-using System.Net.Sockets;
+﻿using System.Net.Sockets;
 using System.Text;
 using DotnetAICraft.Models;
 using DotnetAICraft.Output;
@@ -152,6 +152,7 @@ public sealed class DaemonServer : IAsyncDisposable
             object? result = req.Command switch
             {
                 "refs"     => await HandleRefsAsync(req, ct),
+                "definition" => await HandleDefinitionAsync(req, ct),
                 "rename"   => await HandleRenameAsync(req, ct),
                 "impls"    => await HandleImplsAsync(req, ct),
                 "callers"  => await HandleCallersAsync(req, ct),
@@ -207,6 +208,19 @@ public sealed class DaemonServer : IAsyncDisposable
                     loc.Location.GetContextLine());
             })
             .ToList();
+    }
+
+    private async Task<object> HandleDefinitionAsync(DaemonRequest req, CancellationToken ct)
+    {
+        var p = GetParams(req);
+        var solution = GetSolution();
+
+        var symbol = GetOptionalString(p, "symbol");
+        var file = GetOptionalString(p, "file");
+        var line = GetOptionalInt(p, "line");
+        var col = GetOptionalInt(p, "col");
+
+        return await ResolveDefinitionAsync(solution, symbol, file, line, col, ct);
     }
 
     private async Task<object> HandleRenameAsync(DaemonRequest req, CancellationToken ct)
@@ -660,6 +674,39 @@ public sealed class DaemonServer : IAsyncDisposable
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    public static async Task<Models.DefinitionResult> ResolveDefinitionAsync(
+        Solution solution,
+        string? symbol,
+        string? file,
+        int? line,
+        int? col,
+        CancellationToken ct = default)
+    {
+        var hasSymbol = !string.IsNullOrWhiteSpace(symbol);
+        var hasAnyLocation = !string.IsNullOrWhiteSpace(file) || line is not null || col is not null;
+        var hasCompleteLocation = !string.IsNullOrWhiteSpace(file) && line is not null && col is not null;
+
+        if (hasSymbol == hasAnyLocation)
+        {
+            throw new DaemonValidationException(new ErrorInfo(
+                "INVALID_PARAMS",
+                "Provide exactly one input mode: either 'symbol' OR 'file'+'line'+'col'."));
+        }
+
+        if (hasAnyLocation && !hasCompleteLocation)
+        {
+            throw new DaemonValidationException(new ErrorInfo(
+                "INVALID_PARAMS",
+                "Location mode requires 'file', 'line', and 'col' parameters."));
+        }
+
+        ISymbol resolved = hasSymbol
+            ? await SymbolResolver.FromFullNameAsync(solution, symbol!.Trim(), ct)
+            : await SymbolResolver.FromLocationAsync(solution, file!, line!.Value, col!.Value, ct);
+
+        return SymbolToDefinitionResult(resolved);
+    }
+
     public static bool TryParseDiagnosticsSeverity(
         string? raw,
         out DiagnosticSeverity? severity,
@@ -807,6 +854,32 @@ public sealed class DaemonServer : IAsyncDisposable
         return normalizedDiagnosticPath.EndsWith(normalizedFileFilter, comparison);
     }
 
+    private static Models.DefinitionResult SymbolToDefinitionResult(ISymbol symbol)
+    {
+        var sourceLocation = symbol.Locations.FirstOrDefault(l => l.IsInSource);
+
+        string? file = null;
+        int? line = null;
+        int? col = null;
+
+        if (sourceLocation is not null)
+        {
+            var sourcePosition = sourceLocation.GetFileLineCol();
+            file = sourcePosition.File;
+            line = sourcePosition.Line;
+            col = sourcePosition.Col;
+        }
+
+        return new Models.DefinitionResult(
+            FullName:            symbol.ToDisplayString(),
+            Kind:                symbol.GetKindName(),
+            File:                file,
+            Line:                line,
+            Col:                 col,
+            ContainingType:      symbol.ContainingType?.ToDisplayString(),
+            ContainingNamespace: symbol.ContainingNamespace?.ToDisplayString());
+    }
+
     private static Models.SymbolResult SymbolToResult(ISymbol symbol)
     {
         var loc  = symbol.Locations.FirstOrDefault(l => l.IsInSource);
@@ -839,6 +912,20 @@ public sealed class DaemonServer : IAsyncDisposable
         return parameters.TryGetValue(key, out var value)
             ? value?.ToString()
             : null;
+    }
+
+    private static int? GetOptionalInt(Dictionary<string, object?> parameters, string key)
+    {
+        var raw = GetOptionalString(parameters, key);
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        if (int.TryParse(raw, out var parsed))
+            return parsed;
+
+        throw new DaemonValidationException(new ErrorInfo(
+            "INVALID_PARAMS",
+            $"Parameter '{key}' must be an integer."));
     }
 
     private static string GetRequiredString(Dictionary<string, object?> parameters, string key)

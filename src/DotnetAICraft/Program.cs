@@ -1,4 +1,4 @@
-using System.CommandLine;
+﻿using System.CommandLine;
 using DotnetAICraft.Commands;
 using Microsoft.Build.Locator;
 
@@ -37,6 +37,7 @@ var root = new RootCommand(
 
 root.Add(ServerCommand.Build(solutionOption, idleTimeoutOption));
 root.Add(RefsCommand.Build(solutionOption, idleTimeoutOption));
+root.Add(DefinitionCommand.Build(solutionOption, idleTimeoutOption));
 root.Add(RenameCommand.Build(solutionOption, idleTimeoutOption));
 root.Add(ImplsCommand.Build(solutionOption, idleTimeoutOption));
 root.Add(CallersCommand.Build(solutionOption, idleTimeoutOption));

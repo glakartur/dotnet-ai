@@ -13,6 +13,7 @@ public class DaemonTimeoutOptionTests
         var idleTimeoutOption = BuildIdleTimeoutOption();
 
         var refs = RefsCommand.Build(solutionOption, idleTimeoutOption);
+        var definition = DefinitionCommand.Build(solutionOption, idleTimeoutOption);
         var rename = RenameCommand.Build(solutionOption, idleTimeoutOption);
         var impls = ImplsCommand.Build(solutionOption, idleTimeoutOption);
         var callers = CallersCommand.Build(solutionOption, idleTimeoutOption);
@@ -21,6 +22,7 @@ public class DaemonTimeoutOptionTests
         var server = ServerCommand.Build(solutionOption, idleTimeoutOption);
 
         AssertContainsOption(refs, "--idle-timeout");
+        AssertContainsOption(definition, "--idle-timeout");
         AssertContainsOption(rename, "--idle-timeout");
         AssertContainsOption(impls, "--idle-timeout");
         AssertContainsOption(callers, "--idle-timeout");

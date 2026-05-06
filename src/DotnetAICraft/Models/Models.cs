@@ -1,4 +1,4 @@
-namespace DotnetAICraft.Models;
+﻿namespace DotnetAICraft.Models;
 
 public record ReferenceResult(
     string File,
@@ -27,6 +27,15 @@ public record SymbolResult(
     string File,
     int Line,
     int Col,
+    string? ContainingType,
+    string? ContainingNamespace);
+
+public record DefinitionResult(
+    string FullName,
+    string Kind,
+    string? File,
+    int? Line,
+    int? Col,
     string? ContainingType,
     string? ContainingNamespace);
 
