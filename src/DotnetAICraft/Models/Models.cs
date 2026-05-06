@@ -38,6 +38,17 @@ public record DaemonStatus(
     DateTime LoadedAt,
     TimeSpan Uptime);
 
+public record DiagnosticResult(
+    string Project,
+    string Id,
+    string Severity,
+    string Message,
+    string? File,
+    int? Line,
+    int? Col,
+    int? EndLine,
+    int? EndCol);
+
 public record ErrorInfo(
     string Code,
     string Message,

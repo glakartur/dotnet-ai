@@ -40,6 +40,7 @@ root.Add(RefsCommand.Build(solutionOption, idleTimeoutOption));
 root.Add(RenameCommand.Build(solutionOption, idleTimeoutOption));
 root.Add(ImplsCommand.Build(solutionOption, idleTimeoutOption));
 root.Add(CallersCommand.Build(solutionOption, idleTimeoutOption));
+root.Add(DiagnosticsCommand.Build(solutionOption, idleTimeoutOption));
 root.Add(SymbolsCommand.Build(solutionOption, idleTimeoutOption));
 
 return await root.Parse(args).InvokeAsync();

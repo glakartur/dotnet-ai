@@ -27,6 +27,8 @@ public sealed class DaemonServer : IAsyncDisposable
     private CancellationTokenSource? _idleWatcherCts;
     private int _activeRequests;
 
+    private const string DiagnosticsSeverityAcceptedValues = "all | error | warning | info | hidden";
+
     public DaemonServer(string solutionPath)
     {
         _solutionPath = Path.GetFullPath(solutionPath);
@@ -154,6 +156,7 @@ public sealed class DaemonServer : IAsyncDisposable
                 "impls"    => await HandleImplsAsync(req, ct),
                 "callers"  => await HandleCallersAsync(req, ct),
                 "symbols"  => await HandleSymbolsAsync(req, ct),
+                "diagnostics" => await HandleDiagnosticsAsync(req, ct),
                 "status"   => HandleStatus(),
                 "reload"   => await HandleReloadAsync(ct),
                 "setIdleTimeout" => HandleSetIdleTimeout(req),
@@ -342,6 +345,30 @@ public sealed class DaemonServer : IAsyncDisposable
         }
 
         return results;
+    }
+
+    private async Task<object> HandleDiagnosticsAsync(DaemonRequest req, CancellationToken ct)
+    {
+        var p = GetParams(req);
+
+        var severityRaw = GetOptionalString(p, "severity") ?? "all";
+        var projectFilter = GetOptionalString(p, "project");
+        var fileFilter = GetOptionalString(p, "file");
+
+        if (!TryParseDiagnosticsSeverity(severityRaw, out var severityFilter, out _))
+        {
+            throw new DaemonValidationException(new ErrorInfo(
+                "INVALID_PARAMS",
+                "Invalid 'severity' parameter.",
+                new { acceptedValues = DiagnosticsSeverityAcceptedValues }));
+        }
+
+        return await CollectDiagnosticsAsync(
+            GetSolution(),
+            severityFilter,
+            projectFilter,
+            fileFilter,
+            ct);
     }
 
     private object HandleStatus()
@@ -632,6 +659,153 @@ public sealed class DaemonServer : IAsyncDisposable
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    public static bool TryParseDiagnosticsSeverity(
+        string? raw,
+        out DiagnosticSeverity? severity,
+        out string normalized)
+    {
+        normalized = string.IsNullOrWhiteSpace(raw)
+            ? "all"
+            : raw.Trim().ToLowerInvariant();
+
+        switch (normalized)
+        {
+            case "all":
+                severity = null;
+                return true;
+            case "error":
+                severity = DiagnosticSeverity.Error;
+                return true;
+            case "warning":
+                severity = DiagnosticSeverity.Warning;
+                return true;
+            case "info":
+                severity = DiagnosticSeverity.Info;
+                return true;
+            case "hidden":
+                severity = DiagnosticSeverity.Hidden;
+                return true;
+            default:
+                severity = null;
+                return false;
+        }
+    }
+
+    public static async Task<IReadOnlyList<Models.DiagnosticResult>> CollectDiagnosticsAsync(
+        Solution solution,
+        DiagnosticSeverity? severityFilter = null,
+        string? projectFilter = null,
+        string? fileFilter = null,
+        CancellationToken ct = default)
+    {
+        var normalizedProject = string.IsNullOrWhiteSpace(projectFilter)
+            ? null
+            : projectFilter.Trim();
+
+        var normalizedFile = string.IsNullOrWhiteSpace(fileFilter)
+            ? null
+            : fileFilter.Trim();
+
+        var results = new List<Models.DiagnosticResult>();
+
+        foreach (var project in solution.Projects)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (normalizedProject is not null &&
+                !string.Equals(project.Name, normalizedProject, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var compilation = await project.GetCompilationAsync(ct);
+            if (compilation is null)
+                continue;
+
+            foreach (var diagnostic in compilation.GetDiagnostics(ct))
+            {
+                if (severityFilter is not null && diagnostic.Severity != severityFilter.Value)
+                    continue;
+
+                var mapped = MapDiagnostic(project.Name, diagnostic);
+                if (!MatchesFileFilter(mapped.File, normalizedFile))
+                    continue;
+
+                results.Add(mapped);
+            }
+        }
+
+        return results
+            .OrderBy(r => r.Project, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(r => r.File ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(r => r.Line ?? int.MaxValue)
+            .ThenBy(r => r.Col ?? int.MaxValue)
+            .ThenBy(r => r.Id, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static Models.DiagnosticResult MapDiagnostic(string projectName, Diagnostic diagnostic)
+    {
+        string? file = null;
+        int? line = null;
+        int? col = null;
+        int? endLine = null;
+        int? endCol = null;
+
+        if (diagnostic.Location is { IsInSource: true } location)
+        {
+            var lineSpan = location.GetLineSpan();
+            file = lineSpan.Path;
+            line = lineSpan.StartLinePosition.Line + 1;
+            col = lineSpan.StartLinePosition.Character + 1;
+            endLine = lineSpan.EndLinePosition.Line + 1;
+            endCol = lineSpan.EndLinePosition.Character + 1;
+        }
+
+        return new Models.DiagnosticResult(
+            Project: projectName,
+            Id: diagnostic.Id,
+            Severity: diagnostic.Severity.ToString().ToLowerInvariant(),
+            Message: diagnostic.GetMessage(),
+            File: file,
+            Line: line,
+            Col: col,
+            EndLine: endLine,
+            EndCol: endCol);
+    }
+
+    private static bool MatchesFileFilter(string? diagnosticPath, string? fileFilter)
+    {
+        if (fileFilter is null)
+            return true;
+
+        if (string.IsNullOrWhiteSpace(diagnosticPath))
+            return false;
+
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        var normalizedDiagnosticPath = diagnosticPath.Replace('\\', '/');
+        var normalizedFileFilter = fileFilter.Replace('\\', '/');
+
+        if (Path.IsPathRooted(fileFilter))
+        {
+            try
+            {
+                var fullDiagnosticPath = Path.GetFullPath(normalizedDiagnosticPath);
+                var fullFilterPath = Path.GetFullPath(normalizedFileFilter);
+                return string.Equals(fullDiagnosticPath, fullFilterPath, comparison);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        return normalizedDiagnosticPath.EndsWith(normalizedFileFilter, comparison);
+    }
 
     private static Models.SymbolResult SymbolToResult(ISymbol symbol)
     {
