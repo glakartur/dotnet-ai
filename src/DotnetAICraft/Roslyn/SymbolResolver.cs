@@ -19,7 +19,8 @@ public static class SymbolResolver
     {
         var normalizedPath = Path.GetFullPath(filePath);
 
-        var docId = solution.GetDocumentIdsWithFilePath(normalizedPath).FirstOrDefault()
+        var docId = solution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault()
+            ?? solution.GetDocumentIdsWithFilePath(normalizedPath).FirstOrDefault()
             ?? throw new FileNotFoundException(
                 $"File not found in solution: {filePath}\n" +
                 $"Tip: make sure the path is absolute or relative to the solution directory.");
