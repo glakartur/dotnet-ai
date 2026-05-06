@@ -1,0 +1,23 @@
+{
+  "name": "dotnet-aicraft",
+  "description": "Semantic .NET code analysis for AI agents powered by Roslyn",
+  "owner": {
+    "name": "Artur Gawrylak",
+    "email": "glakartur@int.pl"
+  },
+  "plugins": [
+    {
+      "name": "dotnet-aicraft",
+      "source": "./plugins/dotnet-aicraft",
+      "description": "Semantic .NET code analysis for AI agents — find references, rename symbols, explore call hierarchy using Roslyn.",
+      "author": {
+        "name": "Artur Gawrylak",
+        "email": "glakartur@int.pl"
+      },
+      "homepage": "https://github.com/glakartur/dotnet-aicraft",
+      "repository": "https://github.com/glakartur/dotnet-aicraft",
+      "license": "MIT",
+      "keywords": ["roslyn", "dotnet", "ai", "agent", "refactoring", "codeanalysis", "semantic"]
+    }
+  ]
+}
