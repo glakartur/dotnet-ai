@@ -9,6 +9,11 @@ public static class WorkspaceLoader
         string path,
         CancellationToken ct = default)
     {
+        // Force C# workspace assembly to load before MSBuildWorkspace is created.
+        // Without this, OpenSolutionAsync fails on Linux with "language 'C#' is not supported"
+        // because the MEF-based language service isn't discovered automatically from the SLN path.
+        _ = typeof(Microsoft.CodeAnalysis.CSharp.Formatting.CSharpFormattingOptions);
+
         var workspace = MSBuildWorkspace.Create(new Dictionary<string, string>
         {
             // Ensures design-time build — avoids running generators that need network etc.

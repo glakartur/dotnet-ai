@@ -709,14 +709,14 @@ public sealed class DaemonServer : IAsyncDisposable
             var docIds   = solution.GetDocumentIdsWithFilePath(filePath);
             if (docIds.IsEmpty) return;
 
-            var newText = SourceText.From(await File.ReadAllTextAsync(filePath), Encoding.UTF8);
-            var updated = solution.WithDocumentText(docIds.First(), newText);
+            var content = await File.ReadAllTextAsync(filePath);
+            // Guard against empty reads during concurrent writes (e.g. build tools flushing)
+            if (string.IsNullOrEmpty(content)) return;
 
-            if (_workspace!.TryApplyChanges(updated))
-            {
-                _solution = _workspace.CurrentSolution;
-                Log($"Updated: {Path.GetFileName(filePath)}");
-            }
+            var newText = SourceText.From(content, Encoding.UTF8);
+            // Update in-memory solution only — do NOT call TryApplyChanges, which writes back to disk
+            _solution = solution.WithDocumentText(docIds.First(), newText);
+            Log($"Updated: {Path.GetFileName(filePath)}");
         }
         catch (Exception ex) { Log($"File update error: {ex.Message}"); }
         finally { _solutionLock.Release(); }
