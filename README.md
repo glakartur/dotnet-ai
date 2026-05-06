@@ -61,6 +61,30 @@ dotnet aicraft refs --solution App.sln --symbol "MyApp.Services.OrderService.Pro
 ]
 ```
 
+### Find declaration/definition of a symbol
+
+```bash
+# By file location
+
+dotnet aicraft definition --solution App.sln --file src/Services/OrderService.cs --line 42 --col 18
+
+# By fully-qualified name
+
+dotnet aicraft definition --solution App.sln --symbol "MyApp.Services.OrderService.ProcessOrder"
+```
+
+```json
+{
+  "fullName": "MyApp.Services.OrderService.ProcessOrder(MyApp.Contracts.OrderRequest)",
+  "kind": "method",
+  "file": "/src/Services/OrderService.cs",
+  "line": 42,
+  "col": 18,
+  "containingType": "MyApp.Services.OrderService",
+  "containingNamespace": "MyApp.Services"
+}
+```
+
 ### Rename a symbol (safe, cross-solution)
 
 ```bash
@@ -94,20 +118,74 @@ dotnet aicraft rename --solution App.sln \
 dotnet aicraft impls --solution App.sln --symbol "MyApp.Interfaces.IOrderProcessor"
 ```
 
-### Find callers of a method (call hierarchy)
+### Find callers/callees of a method (call graph)
 
 ```bash
+# Backward-compatible mode (incoming callers, depth=1)
 dotnet aicraft callers --solution App.sln --symbol "MyApp.Services.OrderService.ProcessOrder"
 
-# Or by location:
-dotnet aicraft callers --solution App.sln --file Services/OrderService.cs --line 42 --col 18
+# Outgoing callees
+
+dotnet aicraft callers --solution App.sln \
+  --symbol "MyApp.Services.OrderService.ProcessOrder" \
+  --direction outgoing --depth 2
+
+# Both directions by file location
+
+dotnet aicraft callers --solution App.sln \
+  --file Services/OrderService.cs --line 42 --col 18 \
+  --direction both --depth 2
 ```
 
 ### Search symbols by pattern
 
 ```bash
+# Pattern + coarse kind filter (compatible with existing behavior)
 dotnet aicraft symbols --solution App.sln --pattern "Process*" --kind method
-dotnet aicraft symbols --solution App.sln --pattern "*Repository" --kind type
+
+# Granular kind filters
+
+dotnet aicraft symbols --solution App.sln --pattern "I*" --kind interface
+dotnet aicraft symbols --solution App.sln --pattern "*Repository" --kind class
+
+# Pagination
+
+dotnet aicraft symbols --solution App.sln --pattern "*" --kind all --limit 100 --offset 200
+```
+
+`symbols` returns paged JSON:
+
+```json
+{
+  "items": [
+    {
+      "name": "ProcessOrder",
+      "fullName": "MyApp.Services.OrderService.ProcessOrder(MyApp.Contracts.OrderRequest)",
+      "kind": "method",
+      "file": "/src/Services/OrderService.cs",
+      "line": 42,
+      "col": 18,
+      "containingType": "MyApp.Services.OrderService",
+      "containingNamespace": "MyApp.Services"
+    }
+  ],
+  "hasMore": true
+}
+```
+
+### List Roslyn diagnostics
+
+```bash
+dotnet aicraft diagnostics --solution App.sln --severity warning
+dotnet aicraft diagnostics --solution App.sln --project MyApp.Core --file src/Services/OrderService.cs
+```
+
+### Find likely unused symbols (dead-code candidates)
+
+```bash
+dotnet aicraft unused --solution App.sln --kind method
+dotnet aicraft unused --solution App.sln --project MyApp.Core --public-only
+dotnet aicraft unused --solution App.sln --kind class --include-generated
 ```
 
 ### Daemon management
@@ -167,10 +245,13 @@ $ dotnet aicraft callers --solution App.sln --file Foo.cs --line 10 --col 5
 | Command | Description |
 |---|---|
 | `dotnet aicraft refs` | All references to a symbol |
+| `dotnet aicraft definition` | Resolve declaration by location or FQN |
 | `dotnet aicraft rename` | Safe rename across solution (with `--dry-run`) |
 | `dotnet aicraft impls` | Implementations of interface/abstract member |
-| `dotnet aicraft callers` | All callers of a method |
-| `dotnet aicraft symbols` | Search symbols by name pattern |
+| `dotnet aicraft callers` | Call graph (`incoming`, `outgoing`, `both`) with `--depth` |
+| `dotnet aicraft symbols` | Search symbols by name pattern with pagination |
+| `dotnet aicraft diagnostics` | Roslyn diagnostics (`severity/project/file` filters) |
+| `dotnet aicraft unused` | Candidates for unused/dead code |
 | `dotnet aicraft server status` | Daemon status |
 | `dotnet aicraft server reload` | Reload solution |
 | `dotnet aicraft server stop` | Stop daemon |
