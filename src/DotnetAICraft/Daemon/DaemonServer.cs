@@ -251,6 +251,13 @@ public sealed class DaemonServer : IAsyncDisposable
                 ex.Error,
                 new ResponseMeta(sw.ElapsedMilliseconds, _loadedAt));
         }
+        catch (ArgumentException ex)
+        {
+            return CreateErrorResponse(
+                req.Id,
+                new ErrorInfo("INVALID_PARAMS", ex.Message),
+                new ResponseMeta(sw.ElapsedMilliseconds, _loadedAt));
+        }
         catch (Exception ex)
         {
             Log($"Dispatch error ({req.Command}): {ex.Message}");

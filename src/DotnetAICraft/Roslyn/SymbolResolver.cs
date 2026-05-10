@@ -21,9 +21,10 @@ public static class SymbolResolver
 
         var docId = solution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault()
             ?? solution.GetDocumentIdsWithFilePath(normalizedPath).FirstOrDefault()
-            ?? throw new FileNotFoundException(
+            ?? throw new ArgumentException(
                 $"File not found in solution: {filePath}\n" +
-                $"Tip: make sure the path is absolute or relative to the solution directory.");
+                $"Tip: make sure the path is absolute or relative to the solution directory.",
+                nameof(filePath));
 
         var document = solution.GetDocument(docId)!;
         var sourceText = await document.GetTextAsync(ct);
@@ -57,7 +58,7 @@ public static class SymbolResolver
             node = node.Parent;
         }
 
-        throw new InvalidOperationException(
+        throw new ArgumentException(
             $"No symbol found at {filePath}:{line}:{col}.\n" +
             $"Tip: point to the symbol identifier, not whitespace or punctuation.");
     }
@@ -90,9 +91,10 @@ public static class SymbolResolver
                 return match;
         }
 
-        throw new InvalidOperationException(
+        throw new ArgumentException(
             $"Symbol '{fullName}' not found in any project in the solution.\n" +
-            $"Tip: use the fully qualified name, e.g. 'MyApp.Services.OrderService.ProcessOrder'.");
+            $"Tip: use the fully qualified name, e.g. 'MyApp.Services.OrderService.ProcessOrder'.",
+            nameof(fullName));
     }
 
     /// <summary>
