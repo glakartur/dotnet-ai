@@ -53,7 +53,7 @@ public sealed class DaemonStartupLock : IDisposable, IAsyncDisposable
                     FileAccess.ReadWrite,
                     FileShare.None,
                     bufferSize: 1,
-                    FileOptions.None);
+                    OperatingSystem.IsWindows() ? FileOptions.DeleteOnClose : FileOptions.None);
 
                 return new DaemonStartupLock(normalizedSolutionPath, lockPath, stream);
             }
@@ -104,20 +104,6 @@ public sealed class DaemonStartupLock : IDisposable, IAsyncDisposable
 
         _disposed = true;
         _stream.Dispose();
-
-        try
-        {
-            if (File.Exists(LockPath))
-                File.Delete(LockPath);
-        }
-        catch (IOException)
-        {
-            // Best-effort cleanup; lingering file does not hold the lock.
-        }
-        catch (UnauthorizedAccessException)
-        {
-            // Best-effort cleanup; lingering file does not hold the lock.
-        }
     }
 
     public ValueTask DisposeAsync()

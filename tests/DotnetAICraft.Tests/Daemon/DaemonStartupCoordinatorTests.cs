@@ -26,7 +26,10 @@ public sealed class DaemonStartupCoordinatorTests
         var lockPath = first.LockPath;
         await first.DisposeAsync();
 
-        Assert.False(File.Exists(lockPath));
+        if (OperatingSystem.IsWindows())
+            Assert.False(File.Exists(lockPath));
+        else
+            Assert.True(File.Exists(lockPath));
 
         await using var second = await DaemonStartupLock.AcquireAsync(solutionPath, TimeSpan.FromSeconds(1));
         Assert.Equal(Path.GetFullPath(solutionPath), second.SolutionPath);
