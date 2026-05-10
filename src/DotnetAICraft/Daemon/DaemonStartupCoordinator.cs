@@ -167,9 +167,6 @@ public static class DaemonStartupCoordinator
         error = null;
         var socketPath = DaemonClient.GetSocketPath(solutionPath);
 
-        if (OperatingSystem.IsWindows())
-            return true;
-
         if (!File.Exists(socketPath))
             return true;
 

@@ -23,10 +23,42 @@ public sealed class DaemonStartupCoordinatorTests
     {
         var solutionPath = CreateUniqueSolutionPath();
         var first = await DaemonStartupLock.AcquireAsync(solutionPath, TimeSpan.FromSeconds(1));
+        var lockPath = first.LockPath;
         await first.DisposeAsync();
+
+        Assert.False(File.Exists(lockPath));
 
         await using var second = await DaemonStartupLock.AcquireAsync(solutionPath, TimeSpan.FromSeconds(1));
         Assert.Equal(Path.GetFullPath(solutionPath), second.SolutionPath);
+    }
+
+    [Fact]
+    public async Task PrepareServerStart_WithRegularFileAtSocketPath_DeletesStalePathAndStartsNew()
+    {
+        var solutionPath = CreateUniqueSolutionPath();
+        var socketPath = DaemonClient.GetSocketPath(solutionPath);
+        var parentDir = Path.GetDirectoryName(socketPath)!;
+        Directory.CreateDirectory(parentDir);
+        await File.WriteAllTextAsync(socketPath, "stale");
+
+        var decision = await DaemonStartupCoordinator.PrepareServerStartAsync(
+            solutionPath,
+            lockTimeout: TimeSpan.FromSeconds(1));
+
+        try
+        {
+            Assert.Equal(DaemonServerStartDecisionType.StartNew, decision.Type);
+            Assert.NotNull(decision.StartupLock);
+            Assert.False(File.Exists(socketPath));
+        }
+        finally
+        {
+            if (decision.StartupLock is not null)
+                await decision.StartupLock.DisposeAsync();
+
+            if (File.Exists(socketPath))
+                File.Delete(socketPath);
+        }
     }
 
     [Fact]
