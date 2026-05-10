@@ -1,11 +1,16 @@
 using System.CommandLine;
 using DotnetAICraft.Commands;
+using DotnetAICraft.Commands.Shared;
+using DotnetAICraft.Daemon;
+using System.Text.Json;
 using Xunit;
 
 namespace DotnetAICraft.Tests.Commands;
 
 public class DaemonTimeoutOptionTests
 {
+    private static readonly SemaphoreSlim ConsoleCaptureLock = new(1, 1);
+
     [Fact]
     public void DaemonBackedCommands_ExposeIdleTimeoutOption()
     {
@@ -35,6 +40,57 @@ public class DaemonTimeoutOptionTests
         var reload = server.Subcommands.Single(c => c.Name == "reload");
         AssertContainsOption(start, "--idle-timeout");
         AssertContainsOption(reload, "--idle-timeout");
+    }
+
+    [Fact]
+    public async Task ConnectOrWriteValidationErrorAsync_WithDirectorySocketArtifact_WritesInvalidTypeError()
+    {
+        var solutionPath = Path.Combine(Path.GetTempPath(), $"dotnet-aicraft-test-{Guid.NewGuid():N}.sln");
+        var socketPath = DaemonClient.GetSocketPath(solutionPath);
+        Directory.CreateDirectory(socketPath);
+
+        try
+        {
+            DaemonClient? client;
+            string output;
+
+            await ConsoleCaptureLock.WaitAsync();
+            try
+            {
+                var originalOut = Console.Out;
+                using var writer = new StringWriter();
+                try
+                {
+                    Console.SetOut(writer);
+                    client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout: null);
+                    output = writer.ToString();
+                }
+                finally
+                {
+                    Console.SetOut(originalOut);
+                }
+            }
+            finally
+            {
+                ConsoleCaptureLock.Release();
+            }
+
+            Assert.Null(client);
+            Assert.False(string.IsNullOrWhiteSpace(output));
+
+            using var json = JsonDocument.Parse(output);
+            var error = json.RootElement.GetProperty("error");
+            Assert.Equal("DAEMON_STARTUP_STALE_SOCKET_INVALID_TYPE", error.GetProperty("code").GetString());
+
+            var details = error.GetProperty("details");
+            Assert.Equal("start", details.GetProperty("stage").GetString());
+            Assert.Equal("directory", details.GetProperty("artifactType").GetString());
+        }
+        finally
+        {
+            if (Directory.Exists(socketPath))
+                Directory.Delete(socketPath);
+        }
     }
 
     private static Option<FileInfo> BuildSolutionOption()

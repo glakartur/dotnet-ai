@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using DotnetAICraft.Daemon;
 using Xunit;
 
@@ -183,6 +184,9 @@ public sealed class DaemonStartupCoordinatorTests
             Assert.Equal(DaemonServerStartDecisionType.Failed, decision.Type);
             Assert.NotNull(decision.Error);
             Assert.Equal("DAEMON_STARTUP_STALE_SOCKET_INVALID_TYPE", decision.Error!.Code);
+
+            using var details = JsonDocument.Parse(JsonSerializer.Serialize(decision.Error.Details));
+            Assert.Equal("reparse-point", details.RootElement.GetProperty("artifactType").GetString());
         }
         finally
         {
@@ -191,6 +195,118 @@ public sealed class DaemonStartupCoordinatorTests
 
             if (File.Exists(targetPath))
                 File.Delete(targetPath);
+        }
+    }
+
+    [Fact]
+    public async Task PrepareServerStart_WithDirectoryAtSocketPath_ReturnsInvalidTypeWithoutDeletingPath()
+    {
+        var solutionPath = CreateUniqueSolutionPath();
+        var socketPath = DaemonClient.GetSocketPath(solutionPath);
+        Directory.CreateDirectory(socketPath);
+
+        try
+        {
+            var decision = await DaemonStartupCoordinator.PrepareServerStartAsync(
+                solutionPath,
+                lockTimeout: TimeSpan.FromSeconds(1));
+
+            Assert.Equal(DaemonServerStartDecisionType.Failed, decision.Type);
+            Assert.NotNull(decision.Error);
+            Assert.Equal("DAEMON_STARTUP_STALE_SOCKET_INVALID_TYPE", decision.Error!.Code);
+
+            using var details = JsonDocument.Parse(JsonSerializer.Serialize(decision.Error.Details));
+            Assert.Equal("directory", details.RootElement.GetProperty("artifactType").GetString());
+            Assert.True(Directory.Exists(socketPath));
+        }
+        finally
+        {
+            if (Directory.Exists(socketPath))
+                Directory.Delete(socketPath);
+        }
+    }
+
+    [Fact]
+    public void BuildStartupProcessExitedError_WithStaleDirectory_ReturnsInvalidTypeErrorWithStartStage()
+    {
+        var solutionPath = CreateUniqueSolutionPath();
+        var socketPath = DaemonClient.GetSocketPath(solutionPath);
+        Directory.CreateDirectory(socketPath);
+
+        try
+        {
+            var error = DaemonClient.BuildStartupProcessExitedError(solutionPath, 2, TimeSpan.FromSeconds(1));
+
+            Assert.Equal("DAEMON_STARTUP_STALE_SOCKET_INVALID_TYPE", error.Code);
+
+            using var details = JsonDocument.Parse(JsonSerializer.Serialize(error.Details));
+            Assert.Equal("start", details.RootElement.GetProperty("stage").GetString());
+            Assert.Equal("directory", details.RootElement.GetProperty("artifactType").GetString());
+        }
+        finally
+        {
+            if (Directory.Exists(socketPath))
+                Directory.Delete(socketPath);
+        }
+    }
+
+    [Fact]
+    public void BuildStartupProcessExitedError_WhenNoStaleArtifact_ReturnsProcessExitedError()
+    {
+        var solutionPath = CreateUniqueSolutionPath();
+
+        var error = DaemonClient.BuildStartupProcessExitedError(solutionPath, 7, TimeSpan.FromSeconds(2));
+
+        Assert.Equal("DAEMON_STARTUP_PROCESS_EXITED", error.Code);
+    }
+
+    [Fact]
+    public async Task ConnectOrStartAsync_WithDirectorySocketArtifact_ThrowsValidationWithInvalidType()
+    {
+        var solutionPath = CreateUniqueSolutionPath();
+        var socketPath = DaemonClient.GetSocketPath(solutionPath);
+        Directory.CreateDirectory(socketPath);
+
+        try
+        {
+            var ex = await Assert.ThrowsAsync<DaemonClientValidationException>(() =>
+                DaemonClient.ConnectOrStartAsync(solutionPath, startTimeout: TimeSpan.FromSeconds(2)));
+
+            Assert.Equal("DAEMON_STARTUP_STALE_SOCKET_INVALID_TYPE", ex.Error.Code);
+        }
+        finally
+        {
+            if (Directory.Exists(socketPath))
+                Directory.Delete(socketPath);
+        }
+    }
+
+    [Fact]
+    public void InvalidTypeError_OnWindows_IncludesRemediationCommands()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var solutionPath = CreateUniqueSolutionPath();
+        var stalePath = DaemonClient.GetSocketPath(solutionPath);
+        Directory.CreateDirectory(stalePath);
+
+        try
+        {
+            var error = DaemonClient.BuildStartupProcessExitedError(solutionPath, 1, TimeSpan.FromSeconds(1));
+            Assert.Equal("DAEMON_STARTUP_STALE_SOCKET_INVALID_TYPE", error.Code);
+
+            using var details = JsonDocument.Parse(JsonSerializer.Serialize(error.Details));
+            var remediation = details.RootElement.GetProperty("remediation");
+            Assert.Equal("Remove the stale artifact manually and retry daemon startup.", remediation.GetProperty("summary").GetString());
+            Assert.True(remediation.GetProperty("powershell").GetString()!.Contains("Remove-Item", StringComparison.Ordinal));
+            Assert.True(remediation.GetProperty("cmdDelete").GetString()!.Contains("del /f", StringComparison.OrdinalIgnoreCase));
+            Assert.True(remediation.GetProperty("cmdJunction").GetString()!.Contains("rmdir", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            if (Directory.Exists(stalePath))
+                Directory.Delete(stalePath);
         }
     }
 
