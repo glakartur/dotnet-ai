@@ -83,13 +83,7 @@ public sealed class DaemonStartupCoordinatorTests
         var fakeSolution = CreateUniqueSolutionPath();
         using var process = new Process
         {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "bash",
-                ArgumentList = { "-lc", "exit 7" },
-                UseShellExecute = false,
-                CreateNoWindow = true
-            }
+            StartInfo = CreateExitProcessStartInfo(7)
         };
 
         process.Start();
@@ -102,6 +96,31 @@ public sealed class DaemonStartupCoordinatorTests
 
         Assert.Null(client);
         Assert.Equal(7, exitCode);
+    }
+
+    private static ProcessStartInfo CreateExitProcessStartInfo(int exitCode)
+    {
+        var processStartInfo = new ProcessStartInfo
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        if (OperatingSystem.IsWindows())
+        {
+            processStartInfo.FileName = "cmd.exe";
+            processStartInfo.ArgumentList.Add("/d");
+            processStartInfo.ArgumentList.Add("/c");
+            processStartInfo.ArgumentList.Add($"exit /b {exitCode}");
+        }
+        else
+        {
+            processStartInfo.FileName = "/bin/sh";
+            processStartInfo.ArgumentList.Add("-c");
+            processStartInfo.ArgumentList.Add($"exit {exitCode}");
+        }
+
+        return processStartInfo;
     }
 
     [Fact]
