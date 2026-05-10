@@ -3,6 +3,7 @@ using System.Text;
 using DotnetAICraft.Models;
 using DotnetAICraft.Output;
 using DotnetAICraft.Roslyn;
+using DotnetAICraft.Commands.Definition;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FindSymbols;
@@ -15,6 +16,7 @@ namespace DotnetAICraft.Daemon;
 public sealed class DaemonServer : IAsyncDisposable
 {
     private readonly string _solutionPath;
+    private readonly DaemonStartupLock? _startupLock;
     private readonly CancellationTokenSource _cts = new();
     private MSBuildWorkspace? _workspace;
     private Solution? _solution;
@@ -91,6 +93,12 @@ public sealed class DaemonServer : IAsyncDisposable
             _idleTimeout = idleTimeout;
     }
 
+    public DaemonServer(string solutionPath, DaemonIdleTimeoutSetting? idleTimeout, DaemonStartupLock? startupLock)
+        : this(solutionPath, idleTimeout)
+    {
+        _startupLock = startupLock;
+    }
+
     public async Task RunAsync()
     {
         Log($"Loading solution: {_solutionPath}");
@@ -98,15 +106,17 @@ public sealed class DaemonServer : IAsyncDisposable
 
         var socketPath = DaemonClient.GetSocketPath(_solutionPath);
 
-        // Clean up stale socket from previous crash
-        if (File.Exists(socketPath)) File.Delete(socketPath);
-
         var endpoint = new UnixDomainSocketEndPoint(socketPath);
         using var listener = new Socket(
             AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
 
         listener.Bind(endpoint);
         listener.Listen(backlog: 16);
+
+        if (_startupLock is not null)
+        {
+            await _startupLock.DisposeAsync();
+        }
 
         // Make socket accessible to current user only
         if (!OperatingSystem.IsWindows())
@@ -276,66 +286,48 @@ public sealed class DaemonServer : IAsyncDisposable
 
     private async Task<object> HandleRenameAsync(DaemonRequest req, CancellationToken ct)
     {
-        var p        = GetParams(req);
+        var p = GetParams(req);
         var solution = GetSolution();
-        var newName  = GetRequiredString(p, "to");
-        var dryRun   = p.TryGetValue("dryRun", out var dr) && dr?.ToString() == "True";
+        var newName = GetRequiredString(p, "to");
+        var dryRun = p.TryGetValue("dryRun", out var dr) && dr?.ToString() == "True";
+        var symbol = GetOptionalString(p, "symbol");
+        var file = symbol is null ? GetRequiredString(p, "file") : GetOptionalString(p, "file");
+        var line = symbol is null ? GetRequiredInt(p, "line") : GetOptionalInt(p, "line");
+        var col = symbol is null ? GetRequiredInt(p, "col") : GetOptionalInt(p, "col");
 
-        var symbolName = GetOptionalString(p, "symbol");
-        ISymbol symbol = symbolName is not null
-            ? await SymbolResolver.FromFullNameAsync(solution, symbolName, ct)
-            : await SymbolResolver.FromLocationAsync(solution,
-                GetRequiredString(p, "file"),
-                GetRequiredInt(p, "line"),
-                GetRequiredInt(p, "col"), ct);
+        var result = await DotnetAICraft.Commands.Rename.UseCase.ResolveAsync(
+            solution,
+            newName,
+            dryRun,
+            symbol,
+            file,
+            line,
+            col,
+            ct);
 
-        var oldName = symbol.Name;
-        var newSolution = await Renamer.RenameSymbolAsync(
-            solution, symbol, new SymbolRenameOptions(), newName, ct);
-
-        var solutionChanges = newSolution.GetChanges(solution);
-        var changes = new List<Models.RenameChange>();
-
-        foreach (var projectChanges in solutionChanges.GetProjectChanges())
-        foreach (var docChange in projectChanges.GetChangedDocuments())
-        {
-            var oldDoc = solution.GetDocument(docChange)!;
-            var newDoc = newSolution.GetDocument(docChange)!;
-            var oldText = await oldDoc.GetTextAsync(ct);
-            var newText = await newDoc.GetTextAsync(ct);
-
-            foreach (var change in newText.GetTextChanges(oldText))
-            {
-                var linePos = oldText.Lines.GetLinePosition(change.Span.Start);
-                var oldTextSegment = oldText.GetSubText(change.Span).ToString();
-
-                changes.Add(new Models.RenameChange(
-                    File:    oldDoc.FilePath ?? "",
-                    Line:    linePos.Line + 1,
-                    Col:     linePos.Character + 1,
-                    OldText: oldTextSegment,
-                    NewText: change.NewText ?? string.Empty));
-            }
-        }
-
-        // Apply changes if not dry-run
-        if (!dryRun)
+        if (result.Applied)
         {
             await _solutionLock.WaitAsync(ct);
             try
             {
-                _workspace!.TryApplyChanges(newSolution);
+                var symbolName = symbol;
+                ISymbol resolved = symbolName is not null
+                    ? await SymbolResolver.FromFullNameAsync(solution, symbolName, ct)
+                    : await SymbolResolver.FromLocationAsync(solution,
+                        GetRequiredString(p, "file"),
+                        GetRequiredInt(p, "line"),
+                        GetRequiredInt(p, "col"), ct);
+
+                var appliedSolution = await Renamer.RenameSymbolAsync(
+                    solution, resolved, new SymbolRenameOptions(), newName, ct);
+
+                _workspace!.TryApplyChanges(appliedSolution);
                 _solution = _workspace.CurrentSolution;
             }
             finally { _solutionLock.Release(); }
         }
 
-        return new Models.RenameResult(
-            Symbol:  symbol.ToDisplayString(),
-            NewName: newName,
-            Applied: !dryRun,
-            DryRun:  dryRun,
-            Changes: changes);
+        return result;
     }
 
     private async Task<object> HandleImplsAsync(DaemonRequest req, CancellationToken ct)
@@ -343,14 +335,10 @@ public sealed class DaemonServer : IAsyncDisposable
         var p        = GetParams(req);
         var solution = GetSolution();
 
-        var symbol = await SymbolResolver.FromFullNameAsync(
-            solution, GetRequiredString(p, "symbol"), ct);
-
-        var impls = symbol is INamedTypeSymbol namedType
-            ? await SymbolFinder.FindImplementationsAsync(namedType, solution, transitive: false, projects: null, ct)
-            : await SymbolFinder.FindImplementationsAsync(symbol, solution, projects: null, ct);
-
-        return impls.Select(s => SymbolToResult(s)).ToList();
+        return await DotnetAICraft.Commands.Impls.UseCase.ResolveAsync(
+            solution,
+            GetRequiredString(p, "symbol"),
+            ct);
     }
 
     private async Task<object> HandleCallersAsync(DaemonRequest req, CancellationToken ct)
@@ -358,27 +346,15 @@ public sealed class DaemonServer : IAsyncDisposable
         var p = GetParams(req);
         var solution = GetSolution();
 
-        var symbolName = GetOptionalString(p, "symbol");
-        var directionRaw = GetOptionalString(p, "direction");
-        var depth = GetOptionalInt(p, "depth");
-
-        if (!TryParseCallGraphDirection(directionRaw, out var direction, out var normalizedDirection))
-            throw new DaemonValidationException(BuildInvalidCallGraphDirectionError());
-
-        if (!TryNormalizeCallGraphDepth(depth, out var normalizedDepth, out var depthError))
-            throw new DaemonValidationException(depthError!);
-
-        var symbol = symbolName is not null
-            ? await SymbolResolver.FromFullNameAsync(solution, symbolName, ct)
-            : await SymbolResolver.FromLocationAsync(solution,
-                GetRequiredString(p, "file"),
-                GetRequiredInt(p, "line"),
-                GetRequiredInt(p, "col"), ct);
-
-        if (direction is CallGraphDirection.Incoming && normalizedDepth == CallGraphDefaultDepth)
-            return await CollectIncomingCallersAsync(solution, symbol, ct);
-
-        return await CollectCallGraphAsync(solution, symbol, normalizedDirection, normalizedDepth, ct);
+        return await DotnetAICraft.Commands.Callers.UseCase.ResolveAsync(
+            solution,
+            GetOptionalString(p, "symbol"),
+            GetOptionalString(p, "file"),
+            GetOptionalInt(p, "line"),
+            GetOptionalInt(p, "col"),
+            GetOptionalString(p, "direction"),
+            GetOptionalInt(p, "depth"),
+            ct);
     }
 
 
@@ -390,30 +366,24 @@ public sealed class DaemonServer : IAsyncDisposable
         var limit   = GetOptionalInt(p, "limit");
         var offset  = GetOptionalInt(p, "offset");
 
-        return await CollectSymbolsAsync(GetSolution(), pattern, kind, limit, offset, ct);
+        return await DotnetAICraft.Commands.Symbols.UseCase.ResolveAsync(
+            GetSolution(),
+            pattern,
+            kind,
+            limit,
+            offset,
+            ct);
     }
 
     private async Task<object> HandleDiagnosticsAsync(DaemonRequest req, CancellationToken ct)
     {
         var p = GetParams(req);
 
-        var severityRaw = GetOptionalString(p, "severity") ?? "all";
-        var projectFilter = GetOptionalString(p, "project");
-        var fileFilter = GetOptionalString(p, "file");
-
-        if (!TryParseDiagnosticsSeverity(severityRaw, out var severityFilter, out _))
-        {
-            throw new DaemonValidationException(new ErrorInfo(
-                "INVALID_PARAMS",
-                "Invalid 'severity' parameter.",
-                new { acceptedValues = DiagnosticsSeverityAcceptedValues }));
-        }
-
-        return await CollectDiagnosticsAsync(
+        return await DotnetAICraft.Commands.Diagnostics.UseCase.ResolveAsync(
             GetSolution(),
-            severityFilter,
-            projectFilter,
-            fileFilter,
+            GetOptionalString(p, "severity") ?? "all",
+            GetOptionalString(p, "project"),
+            GetOptionalString(p, "file"),
             ct);
     }
 
@@ -421,17 +391,12 @@ public sealed class DaemonServer : IAsyncDisposable
     {
         var p = GetParams(req);
 
-        var kind = GetOptionalString(p, "kind") ?? "all";
-        var project = GetOptionalString(p, "project");
-        var publicOnly = GetOptionalBool(p, "publicOnly") ?? false;
-        var includeGenerated = GetOptionalBool(p, "includeGenerated") ?? false;
-
-        return await CollectUnusedAsync(
+        return await DotnetAICraft.Commands.Unused.UseCase.ResolveAsync(
             GetSolution(),
-            kind,
-            project,
-            publicOnly,
-            includeGenerated,
+            GetOptionalString(p, "kind") ?? "all",
+            GetOptionalString(p, "project"),
+            GetOptionalBool(p, "publicOnly") ?? false,
+            GetOptionalBool(p, "includeGenerated") ?? false,
             ct);
     }
 
@@ -732,29 +697,14 @@ public sealed class DaemonServer : IAsyncDisposable
         int? col,
         CancellationToken ct = default)
     {
-        var hasSymbol = !string.IsNullOrWhiteSpace(symbol);
-        var hasAnyLocation = !string.IsNullOrWhiteSpace(file) || line is not null || col is not null;
-        var hasCompleteLocation = !string.IsNullOrWhiteSpace(file) && line is not null && col is not null;
-
-        if (hasSymbol == hasAnyLocation)
+        try
         {
-            throw new DaemonValidationException(new ErrorInfo(
-                "INVALID_PARAMS",
-                "Provide exactly one input mode: either 'symbol' OR 'file'+'line'+'col'."));
+            return await UseCase.ResolveAsync(solution, symbol, file, line, col, ct);
         }
-
-        if (hasAnyLocation && !hasCompleteLocation)
+        catch (ArgumentException ex)
         {
-            throw new DaemonValidationException(new ErrorInfo(
-                "INVALID_PARAMS",
-                "Location mode requires 'file', 'line', and 'col' parameters."));
+            throw new DaemonValidationException(new ErrorInfo("INVALID_PARAMS", ex.Message));
         }
-
-        ISymbol resolved = hasSymbol
-            ? await SymbolResolver.FromFullNameAsync(solution, symbol!.Trim(), ct)
-            : await SymbolResolver.FromLocationAsync(solution, file!, line!.Value, col!.Value, ct);
-
-        return SymbolToDefinitionResult(resolved);
     }
 
     public static bool TryParseCallGraphDirection(string? raw, out string normalized)
@@ -1688,32 +1638,6 @@ public sealed class DaemonServer : IAsyncDisposable
         return (reason, confidence);
     }
 
-    private static Models.DefinitionResult SymbolToDefinitionResult(ISymbol symbol)
-    {
-        var sourceLocation = symbol.Locations.FirstOrDefault(l => l.IsInSource);
-
-        string? file = null;
-        int? line = null;
-        int? col = null;
-
-        if (sourceLocation is not null)
-        {
-            var sourcePosition = sourceLocation.GetFileLineCol();
-            file = sourcePosition.File;
-            line = sourcePosition.Line;
-            col = sourcePosition.Col;
-        }
-
-        return new Models.DefinitionResult(
-            FullName:            symbol.ToDisplayString(),
-            Kind:                symbol.GetKindName(),
-            File:                file,
-            Line:                line,
-            Col:                 col,
-            ContainingType:      symbol.ContainingType?.ToDisplayString(),
-            ContainingNamespace: symbol.ContainingNamespace?.ToDisplayString());
-    }
-
     private static Models.SymbolResult SymbolToResult(ISymbol symbol)
     {
         var loc  = symbol.Locations.FirstOrDefault(l => l.IsInSource);
@@ -1810,6 +1734,8 @@ public sealed class DaemonServer : IAsyncDisposable
         }
 
         _watcher?.Dispose();
+        if (_startupLock is not null)
+            await _startupLock.DisposeAsync();
         _cts.Dispose();
         _workspace?.Dispose();
         _solutionLock.Dispose();

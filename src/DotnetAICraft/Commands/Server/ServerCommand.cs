@@ -1,6 +1,6 @@
 using System.CommandLine;
 using DotnetAICraft.Daemon;
-using DotnetAICraft.Output;
+using DotnetAICraft.Commands.Server;
 
 namespace DotnetAICraft.Commands;
 
@@ -28,15 +28,7 @@ public static class ServerCommand
         {
             var solution = parseResult.GetRequiredValue(solutionOption);
             var idleTimeout = parseResult.GetValue(idleTimeoutOption);
-
-            if (!DaemonIdleTimeoutParser.TryParseOptional(idleTimeout, out var timeout, out var error))
-            {
-                JsonOutput.WriteError(error!.Code, error.Message, error.Details);
-                return;
-            }
-
-            await using var server = new DaemonServer(solution.FullName, timeout);
-            await server.RunAsync();
+            await Entry.StartAsync(solution.FullName, idleTimeout);
         });
 
         return cmd;
@@ -50,18 +42,7 @@ public static class ServerCommand
         cmd.SetAction(async parseResult =>
         {
             var solution = parseResult.GetRequiredValue(solutionOption);
-
-            var client = await DaemonClient.TryConnectAsync(solution.FullName);
-            if (client is null)
-            {
-                JsonOutput.WriteError("DAEMON_NOT_RUNNING", "No daemon running for this solution.");
-                return;
-            }
-            await using (client)
-            {
-                var res = await client.SendAsync("shutdown");
-                JsonOutput.Write(res.Result);
-            }
+            await Entry.StopAsync(solution.FullName);
         });
 
         return cmd;
@@ -75,18 +56,7 @@ public static class ServerCommand
         cmd.SetAction(async parseResult =>
         {
             var solution = parseResult.GetRequiredValue(solutionOption);
-
-            var client = await DaemonClient.TryConnectAsync(solution.FullName);
-            if (client is null)
-            {
-                JsonOutput.Write(new { running = false, solutionPath = solution.FullName });
-                return;
-            }
-            await using (client)
-            {
-                var res = await client.SendAsync("status");
-                JsonOutput.Write(res.Ok ? res.Result : (object)res.Error!);
-            }
+            await Entry.StatusAsync(solution.FullName);
         });
 
         return cmd;
@@ -102,16 +72,7 @@ public static class ServerCommand
         {
             var solution = parseResult.GetRequiredValue(solutionOption);
             var idleTimeout = parseResult.GetValue(idleTimeoutOption);
-
-            var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solution.FullName, idleTimeout);
-            if (client is null)
-                return;
-
-            await using (client)
-            {
-                var res = await client.SendAsync("reload");
-                JsonOutput.Write(res.Ok ? res.Result : (object)res.Error!);
-            }
+            await Entry.ReloadAsync(solution.FullName, idleTimeout);
         });
 
         return cmd;

@@ -1,21 +1,18 @@
 using System.CommandLine;
 using DotnetAICraft.Commands;
-using DotnetAICraft.Commands.Definition;
+using DotnetAICraft.Commands.Refs;
 using Xunit;
 
 namespace DotnetAICraft.Tests.Commands;
 
-public class DefinitionCommandTests
+public class RefsCommandTests
 {
     [Fact]
     public void Build_ExposesExpectedOptionsAndAliases()
     {
-        var solutionOption = BuildSolutionOption();
-        var idleTimeoutOption = BuildIdleTimeoutOption();
+        var command = RefsCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption());
 
-        var command = DefinitionCommand.Build(solutionOption, idleTimeoutOption);
-
-        Assert.Equal("definition", command.Name);
+        Assert.Equal("refs", command.Name);
         AssertContainsOption(command, "--solution");
         AssertContainsOption(command, "-s");
         AssertContainsOption(command, "--file");
@@ -26,15 +23,14 @@ public class DefinitionCommandTests
     }
 
     [Fact]
-    public void ValidateArgs_RejectsMissingMixedOrPartialInputModes()
+    public void ValidateArgs_RejectsMissingModes()
     {
         AssertValidationFails(file: null, line: null, col: null, symbol: null);
-        AssertValidationFails(file: new FileInfo("/tmp/Sample.cs"), line: 10, col: 4, symbol: "Demo.Sample");
         AssertValidationFails(file: new FileInfo("/tmp/Sample.cs"), line: 10, col: null, symbol: null);
     }
 
     [Fact]
-    public void ValidateArgs_AllowsExactlyOneInputMode()
+    public void ValidateArgs_AllowsSymbolOrCompleteLocation()
     {
         AssertValidationSucceeds(file: null, line: null, col: null, symbol: "Demo.Sample");
         AssertValidationSucceeds(file: new FileInfo("/tmp/Sample.cs"), line: 10, col: 4, symbol: null);

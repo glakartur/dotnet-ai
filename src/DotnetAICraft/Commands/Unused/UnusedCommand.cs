@@ -1,6 +1,6 @@
 using System.CommandLine;
 using DotnetAICraft.Daemon;
-using DotnetAICraft.Output;
+using DotnetAICraft.Commands.Unused;
 
 namespace DotnetAICraft.Commands;
 
@@ -48,41 +48,7 @@ public static class UnusedCommand
             var includeGenerated = parseResult.GetValue(includeGeneratedOpt);
             var idleTimeout = parseResult.GetValue(idleTimeoutOption);
 
-            if (!DaemonServer.TryParseUnusedKind(kind, out var normalizedKind))
-            {
-                JsonOutput.WriteError(
-                    "INVALID_PARAMS",
-                    "Invalid 'kind' parameter.",
-                    new { acceptedValues = DaemonServer.UnusedKindAcceptedValues });
-                return;
-            }
-
-            var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solution.FullName, idleTimeout);
-            if (client is null)
-                return;
-
-            await using (client)
-            {
-                var res = await client.SendAsync("unused", new
-                {
-                    kind = normalizedKind,
-                    project,
-                    publicOnly,
-                    includeGenerated
-                });
-
-                if (res.Ok)
-                {
-                    JsonOutput.Write(res.Result);
-                    return;
-                }
-
-                var error = res.Error;
-                JsonOutput.WriteError(
-                    error?.Code ?? "UNKNOWN_ERROR",
-                    error?.Message ?? "Unknown daemon error.",
-                    error?.Details);
-            }
+            await Entry.ExecuteAsync(solution.FullName, kind, project, publicOnly, includeGenerated, idleTimeout);
         });
 
         return cmd;

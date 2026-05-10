@@ -1,6 +1,6 @@
 ﻿using System.CommandLine;
 using DotnetAICraft.Daemon;
-using DotnetAICraft.Output;
+using DotnetAICraft.Commands.Symbols;
 
 namespace DotnetAICraft.Commands;
 
@@ -46,39 +46,7 @@ public static class SymbolsCommand
             var offset = parseResult.GetRequiredValue(offsetOpt);
             var idleTimeout = parseResult.GetValue(idleTimeoutOption);
 
-            if (!DaemonServer.TryParseSymbolsKind(kind, out _, out _, out var normalizedKind))
-            {
-                JsonOutput.WriteError(
-                    "INVALID_PARAMS",
-                    "Invalid 'kind' parameter.",
-                    new { acceptedValues = DaemonServer.SymbolsKindAcceptedValues });
-                return;
-            }
-
-            if (!DaemonServer.TryNormalizeSymbolsPagination(limit, offset, out var normalizedLimit, out var normalizedOffset, out var paginationError))
-            {
-                JsonOutput.WriteError(
-                    paginationError?.Code ?? "INVALID_PARAMS",
-                    paginationError?.Message ?? "Invalid symbols pagination parameters.",
-                    paginationError?.Details);
-                return;
-            }
-
-            var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solution.FullName, idleTimeout);
-            if (client is null)
-                return;
-
-            await using (client)
-            {
-                var res = await client.SendAsync("symbols", new
-                {
-                    pattern,
-                    kind = normalizedKind,
-                    limit = normalizedLimit,
-                    offset = normalizedOffset
-                });
-                JsonOutput.Write(res.Ok ? res.Result : (object)res.Error!);
-            }
+            await Entry.ExecuteAsync(solution.FullName, pattern, kind, limit, offset, idleTimeout);
         });
 
         return cmd;

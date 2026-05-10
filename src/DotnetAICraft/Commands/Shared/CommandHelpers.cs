@@ -1,7 +1,7 @@
 using DotnetAICraft.Daemon;
 using DotnetAICraft.Output;
 
-namespace DotnetAICraft.Commands;
+namespace DotnetAICraft.Commands.Shared;
 
 internal static class CommandHelpers
 {
