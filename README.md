@@ -250,6 +250,24 @@ the next session starts with the default timeout unless you pass `--idle-timeout
 
 If timeout validation fails, the command returns a JSON error and timeout state is not changed.
 
+### Windows stale socket self-heal policy
+
+On Windows, daemon startup now applies a bounded stale-artifact policy before bind:
+
+- Regular-file stale socket artifacts are auto-removed and startup continues.
+- Reparse-point stale artifacts are auto-removed only when all safety gates pass:
+  - local (non-UNC) target path,
+  - target path under the current user's `%TEMP%` root,
+  - daemon artifact naming boundary (`dotnet-aicraft-*.sock`),
+  - supported reparse tag (symbolic link).
+- Any safety-policy failure is fail-closed. Startup stops and returns structured details:
+  - `error.code = DAEMON_STARTUP_STALE_SOCKET_INVALID_TYPE`
+  - `error.details.reasonCode` (for example `outsideTempRoot`, `nonLocalTarget`, `unsupportedReparseTag`)
+  - `error.details.remediation` with Windows-safe manual cleanup guidance.
+
+For safety and privacy, stale-artifact diagnostics expose sanitized fields (artifact name/category,
+reason code, remediation) and do not include absolute local paths.
+
 ```bash
 # First call — daemon starts, loads solution (takes a few seconds)
 $ dotnet aicraft refs --solution App.sln --file Foo.cs --line 10 --col 5
