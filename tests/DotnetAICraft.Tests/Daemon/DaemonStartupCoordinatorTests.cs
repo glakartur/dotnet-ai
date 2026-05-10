@@ -199,6 +199,242 @@ public sealed class DaemonStartupCoordinatorTests
     }
 
     [Fact]
+    public async Task PrepareServerStart_OnWindows_WithSafeReparseSocketPath_DeletesLinkAndStartsNew()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var solutionPath = CreateUniqueSolutionPath();
+        var socketPath = DaemonClient.GetSocketPath(solutionPath);
+        var parentDir = Path.GetDirectoryName(socketPath)!;
+        Directory.CreateDirectory(parentDir);
+
+        var targetPath = Path.Combine(parentDir, $"target-{Guid.NewGuid():N}.sock");
+        await File.WriteAllTextAsync(targetPath, "target");
+
+        if (!TryCreateFileSymlink(socketPath, targetPath))
+            return;
+
+        var decision = await DaemonStartupCoordinator.PrepareServerStartAsync(
+            solutionPath,
+            lockTimeout: TimeSpan.FromSeconds(1));
+
+        try
+        {
+            Assert.Equal(DaemonServerStartDecisionType.StartNew, decision.Type);
+            Assert.NotNull(decision.StartupLock);
+            Assert.False(File.Exists(socketPath));
+            Assert.True(File.Exists(targetPath));
+
+            var counters = DaemonStartupCoordinator.GetStaleSocketOutcomeCounters();
+            Assert.True(counters.ReparseHeal >= 1);
+        }
+        finally
+        {
+            if (decision.StartupLock is not null)
+                await decision.StartupLock.DisposeAsync();
+
+            if (File.Exists(socketPath))
+                File.Delete(socketPath);
+
+            if (File.Exists(targetPath))
+                File.Delete(targetPath);
+        }
+    }
+
+    [Fact]
+    public async Task PrepareServerStart_OnWindows_WithReparseOutsideTempRoot_ReturnsExplicitRejectReason()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var solutionPath = CreateUniqueSolutionPath();
+        var socketPath = DaemonClient.GetSocketPath(solutionPath);
+        var socketDir = Path.GetDirectoryName(socketPath)!;
+        Directory.CreateDirectory(socketDir);
+
+        var outsideRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            $"dotnet-aicraft-outside-temp-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outsideRoot);
+        var targetPath = Path.Combine(outsideRoot, $"target-{Guid.NewGuid():N}.sock");
+        await File.WriteAllTextAsync(targetPath, "outside-temp-target");
+
+        try
+        {
+            if (!TryCreateFileSymlink(socketPath, targetPath))
+                return;
+
+            var decision = await DaemonStartupCoordinator.PrepareServerStartAsync(
+                solutionPath,
+                lockTimeout: TimeSpan.FromSeconds(1));
+
+            Assert.Equal(DaemonServerStartDecisionType.Failed, decision.Type);
+            Assert.NotNull(decision.Error);
+            Assert.Equal("DAEMON_STARTUP_STALE_SOCKET_INVALID_TYPE", decision.Error!.Code);
+
+            using var details = JsonDocument.Parse(JsonSerializer.Serialize(decision.Error.Details));
+            Assert.Equal("outsideTempRoot", details.RootElement.GetProperty("reasonCode").GetString());
+            Assert.Equal("local", details.RootElement.GetProperty("targetPathCategory").GetString());
+            Assert.False(details.RootElement.TryGetProperty("socketPath", out _));
+            Assert.Equal(Path.GetFileName(socketPath), details.RootElement.GetProperty("artifactName").GetString());
+            Assert.True(File.Exists(socketPath));
+
+            var counters = DaemonStartupCoordinator.GetStaleSocketOutcomeCounters();
+            Assert.True(counters.ReparseRejectReasons.TryGetValue("outsideTempRoot", out var count));
+            Assert.True(count >= 1);
+        }
+        finally
+        {
+            if (File.Exists(socketPath))
+                File.Delete(socketPath);
+
+            if (File.Exists(targetPath))
+                File.Delete(targetPath);
+
+            if (Directory.Exists(outsideRoot))
+                Directory.Delete(outsideRoot);
+        }
+    }
+
+    [Fact]
+    public async Task PrepareServerStart_OnWindows_WithDanglingReparseSocketPath_DeletesLinkAndStartsNew()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var solutionPath = CreateUniqueSolutionPath();
+        var socketPath = DaemonClient.GetSocketPath(solutionPath);
+        var socketDir = Path.GetDirectoryName(socketPath)!;
+        Directory.CreateDirectory(socketDir);
+
+        var targetPath = Path.Combine(socketDir, $"dangling-target-{Guid.NewGuid():N}.sock");
+
+        if (!TryCreateFileSymlink(socketPath, targetPath))
+            return;
+
+        Assert.True(File.Exists(socketPath) || Directory.Exists(socketPath));
+
+        var decision = await DaemonStartupCoordinator.PrepareServerStartAsync(
+            solutionPath,
+            lockTimeout: TimeSpan.FromSeconds(1));
+
+        try
+        {
+            Assert.Equal(DaemonServerStartDecisionType.StartNew, decision.Type);
+            Assert.NotNull(decision.StartupLock);
+            Assert.False(File.Exists(socketPath));
+            Assert.False(Directory.Exists(socketPath));
+
+            var counters = DaemonStartupCoordinator.GetStaleSocketOutcomeCounters();
+            Assert.True(counters.ReparseHeal >= 1);
+        }
+        finally
+        {
+            if (decision.StartupLock is not null)
+                await decision.StartupLock.DisposeAsync();
+
+            if (File.Exists(socketPath))
+                File.Delete(socketPath);
+
+            if (Directory.Exists(socketPath))
+                Directory.Delete(socketPath);
+        }
+    }
+
+    [Fact]
+    public async Task PrepareServerStart_OnWindows_WithDirectoryReparsePoint_ReturnsUnsupportedTagReason()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var solutionPath = CreateUniqueSolutionPath();
+        var socketPath = DaemonClient.GetSocketPath(solutionPath);
+        var parentDir = Path.GetDirectoryName(socketPath)!;
+        Directory.CreateDirectory(parentDir);
+
+        var targetDir = Path.Combine(parentDir, $"target-dir-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(targetDir);
+
+        if (!TryCreateDirectorySymlink(socketPath, targetDir))
+            return;
+
+        try
+        {
+            var decision = await DaemonStartupCoordinator.PrepareServerStartAsync(
+                solutionPath,
+                lockTimeout: TimeSpan.FromSeconds(1));
+
+            Assert.Equal(DaemonServerStartDecisionType.Failed, decision.Type);
+            Assert.NotNull(decision.Error);
+
+            using var details = JsonDocument.Parse(JsonSerializer.Serialize(decision.Error!.Details));
+            Assert.Equal("unsupportedReparseTag", details.RootElement.GetProperty("reasonCode").GetString());
+            Assert.True(Directory.Exists(socketPath));
+        }
+        finally
+        {
+            if (Directory.Exists(socketPath))
+                Directory.Delete(socketPath);
+
+            if (Directory.Exists(targetDir))
+                Directory.Delete(targetDir);
+        }
+    }
+
+    [Fact]
+    public async Task StaleSocketOutcomeEvent_EmitsSanitizedStructuredPayload()
+    {
+        var solutionPath = CreateUniqueSolutionPath();
+        var socketPath = DaemonClient.GetSocketPath(solutionPath);
+        var parentDir = Path.GetDirectoryName(socketPath)!;
+        Directory.CreateDirectory(parentDir);
+
+        var recorded = new List<DaemonStartupCoordinator.StaleSocketOutcomeEvent>();
+        DaemonStartupCoordinator.ResetStaleSocketOutcomeCountersForTests();
+
+        void Handler(DaemonStartupCoordinator.StaleSocketOutcomeEvent evt) => recorded.Add(evt);
+        DaemonStartupCoordinator.StaleSocketOutcomeRecorded += Handler;
+
+        try
+        {
+            await File.WriteAllTextAsync(socketPath, "stale");
+
+            var decision = await DaemonStartupCoordinator.PrepareServerStartAsync(
+                solutionPath,
+                lockTimeout: TimeSpan.FromSeconds(1));
+
+            try
+            {
+                Assert.Equal(DaemonServerStartDecisionType.StartNew, decision.Type);
+            }
+            finally
+            {
+                if (decision.StartupLock is not null)
+                    await decision.StartupLock.DisposeAsync();
+            }
+
+            var evt = Assert.Single(recorded);
+            Assert.Equal("regular_heal", evt.Outcome);
+            Assert.Equal("liveness", evt.Stage);
+            Assert.Equal("file", evt.ArtifactType);
+            Assert.Null(evt.ReasonCode);
+
+            var counters = DaemonStartupCoordinator.GetStaleSocketOutcomeCounters();
+            Assert.Equal(1, counters.RegularHeal);
+            Assert.Equal(0, counters.ReparseHeal);
+            Assert.Empty(counters.ReparseRejectReasons);
+        }
+        finally
+        {
+            DaemonStartupCoordinator.StaleSocketOutcomeRecorded -= Handler;
+
+            if (File.Exists(socketPath))
+                File.Delete(socketPath);
+        }
+    }
+
+    [Fact]
     public async Task PrepareServerStart_WithDirectoryAtSocketPath_ReturnsInvalidTypeWithoutDeletingPath()
     {
         var solutionPath = CreateUniqueSolutionPath();
@@ -317,6 +553,51 @@ public sealed class DaemonStartupCoordinatorTests
         Assert.StartsWith(DaemonClient.GetRuntimeDirectory(), lockPath, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void IsUncPathForTests_LocalDevicePath_IsNotUnc()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        Assert.False(DaemonStartupCoordinator.IsUncPathForTests("\\\\?\\C:\\temp\\dotnet-aicraft.sock"));
+    }
+
+    [Fact]
+    public void IsUncPathForTests_TrueUncPaths_AreUnc()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        Assert.True(DaemonStartupCoordinator.IsUncPathForTests("\\\\server\\share\\dotnet-aicraft.sock"));
+        Assert.True(DaemonStartupCoordinator.IsUncPathForTests("\\\\?\\UNC\\server\\share\\dotnet-aicraft.sock"));
+    }
+
     private static string CreateUniqueSolutionPath()
         => Path.Combine(Path.GetTempPath(), $"dotnet-aicraft-test-{Guid.NewGuid():N}.sln");
+
+    private static bool TryCreateFileSymlink(string linkPath, string targetPath)
+    {
+        try
+        {
+            File.CreateSymbolicLink(linkPath, targetPath);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryCreateDirectorySymlink(string linkPath, string targetPath)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(linkPath, targetPath);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }
