@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Net.Sockets;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using DotnetAICraft.Models;
@@ -28,10 +27,7 @@ public sealed class DaemonClient : IAsyncDisposable
     {
         var socketPath = GetSocketPath(solutionPath);
 
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            if (!File.Exists(socketPath)) return null;
-        }
+        if (!File.Exists(socketPath)) return null;
 
         var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
         try
@@ -157,14 +153,12 @@ public sealed class DaemonClient : IAsyncDisposable
         var full  = Path.GetFullPath(solutionPath);
         var hash  = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(full)))[..12];
 
-        return RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-            ? $@"\\.\pipe\dotnet-aicraft-{hash}"
-            : Path.Combine(GetRuntimeDirectory(), $"dotnet-aicraft-{hash}.sock");
+        return Path.Combine(GetRuntimeDirectory(), $"dotnet-aicraft-{hash}.sock");
     }
 
     internal static string GetRuntimeDirectory()
     {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (OperatingSystem.IsWindows())
             return Path.GetTempPath();
 
         var xdgRuntimeDir = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
