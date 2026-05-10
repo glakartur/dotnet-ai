@@ -218,6 +218,30 @@ a background daemon that loads the solution and keeps it in memory. The daemon:
 - **Watches** for `.cs` file changes and applies them incrementally (no full reload)
 - **Auto-shuts down after 60 minutes of inactivity** by default
 - **Supports session-scoped timeout override** via `--idle-timeout` (`off` or a positive duration like `5m`, `1h`)
+
+---
+
+## Internal architecture
+
+The command surface stays stable (`refs`, `definition`, `rename`, `impls`, `callers`,
+`symbols`, `diagnostics`, `unused`, `server`), while implementation follows a
+slice-first internal layout:
+
+```
+src/DotnetAICraft/
+  Slices/
+    <Command>/
+      Entry.cs          # CLI-facing orchestration
+      Validation.cs     # command-specific input normalization/validation
+      UseCase.cs        # semantic operation against Roslyn/daemon model
+      OutputMapping.cs  # response projection to contract models
+```
+
+Design intent:
+
+- Keep behavior and daemon contract stable while making each command traceable end-to-end.
+- Keep shared helpers narrow and explicit (`CommandHelpers` + daemon compatibility helpers).
+- Add shared kernel only when reuse evidence exists across multiple slices.
 - **Resets idle deadline after each handled request completion**
 - **Supports** multiple simultaneous solutions (one daemon per solution)
 

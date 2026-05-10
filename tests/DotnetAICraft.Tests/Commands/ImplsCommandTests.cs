@@ -4,23 +4,27 @@ using Xunit;
 
 namespace DotnetAICraft.Tests.Commands;
 
-public class DiagnosticsCommandTests
+public class ImplsCommandTests
 {
     [Fact]
     public void Build_ExposesExpectedOptionsAndAliases()
     {
-        var solutionOption = BuildSolutionOption();
-        var idleTimeoutOption = BuildIdleTimeoutOption();
+        var command = ImplsCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption());
 
-        var command = DiagnosticsCommand.Build(solutionOption, idleTimeoutOption);
-
-        Assert.Equal("diagnostics", command.Name);
+        Assert.Equal("impls", command.Name);
         AssertContainsOption(command, "--solution");
         AssertContainsOption(command, "-s");
-        AssertContainsOption(command, "--severity");
-        AssertContainsOption(command, "--project");
-        AssertContainsOption(command, "--file");
+        AssertContainsOption(command, "--symbol");
         AssertContainsOption(command, "--idle-timeout");
+    }
+
+    [Fact]
+    public void Build_SymbolOption_IsRequired()
+    {
+        var command = ImplsCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption());
+        var symbolOption = GetOption<string>(command, "--symbol");
+
+        Assert.True(symbolOption.Required);
     }
 
     private static Option<FileInfo> BuildSolutionOption()
@@ -28,6 +32,11 @@ public class DiagnosticsCommandTests
 
     private static Option<string?> BuildIdleTimeoutOption()
         => new("--idle-timeout");
+
+    private static Option<T> GetOption<T>(Command command, string alias)
+        => Assert.IsType<Option<T>>(command.Options.Single(opt =>
+            string.Equals(opt.Name, alias, StringComparison.Ordinal) ||
+            opt.Aliases.Contains(alias)));
 
     private static void AssertContainsOption(Command command, string alias)
         => Assert.Contains(command.Options, opt =>

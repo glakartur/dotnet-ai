@@ -1,6 +1,5 @@
 using System.CommandLine;
-using DotnetAICraft.Daemon;
-using DotnetAICraft.Output;
+using DotnetAICraft.Commands.Refs;
 
 namespace DotnetAICraft.Commands;
 
@@ -27,30 +26,10 @@ public static class RefsCommand
             var symbol = parseResult.GetValue(symbolOpt);
             var idleTimeout = parseResult.GetValue(idleTimeoutOption);
 
-            ValidateArgs(file, line, col, symbol);
-
-            var @params = symbol is not null
-                ? (object)new { symbol }
-                : new { file = file!.FullName, line = line!.Value, col = col!.Value };
-
-            var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solution.FullName, idleTimeout);
-            if (client is null)
-                return;
-
-            await using (client)
-            {
-                var res = await client.SendAsync("refs", @params);
-                JsonOutput.Write(res.Ok ? res.Result : (object)res.Error!);
-            }
+            await Entry.ExecuteAsync(solution.FullName, file, line, col, symbol, idleTimeout);
         });
 
         return cmd;
     }
 
-    private static void ValidateArgs(FileInfo? file, int? line, int? col, string? symbol)
-    {
-        if (symbol is null && (file is null || line is null || col is null))
-            throw new ArgumentException(
-                "Provide either --symbol OR all of --file --line --col");
-    }
 }

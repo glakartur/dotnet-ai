@@ -1,6 +1,5 @@
 using System.CommandLine;
-using DotnetAICraft.Daemon;
-using DotnetAICraft.Output;
+using DotnetAICraft.Commands.Impls;
 
 namespace DotnetAICraft.Commands;
 
@@ -26,15 +25,7 @@ public static class ImplsCommand
             var symbol = parseResult.GetRequiredValue(symbolOpt);
             var idleTimeout = parseResult.GetValue(idleTimeoutOption);
 
-            var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solution.FullName, idleTimeout);
-            if (client is null)
-                return;
-
-            await using (client)
-            {
-                var res = await client.SendAsync("impls", new { symbol });
-                JsonOutput.Write(res.Ok ? res.Result : (object)res.Error!);
-            }
+            await Entry.ExecuteAsync(solution.FullName, symbol, idleTimeout);
         });
 
         return cmd;

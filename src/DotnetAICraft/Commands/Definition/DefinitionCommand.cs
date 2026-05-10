@@ -1,6 +1,5 @@
 using System.CommandLine;
-using DotnetAICraft.Daemon;
-using DotnetAICraft.Output;
+using DotnetAICraft.Commands.Definition;
 
 namespace DotnetAICraft.Commands;
 
@@ -47,38 +46,10 @@ public static class DefinitionCommand
             var symbol = parseResult.GetValue(symbolOpt);
             var idleTimeout = parseResult.GetValue(idleTimeoutOption);
 
-            ValidateArgs(file, line, col, symbol);
-
-            var @params = !string.IsNullOrWhiteSpace(symbol)
-                ? (object)new { symbol = symbol.Trim() }
-                : new { file = file!.FullName, line = line!.Value, col = col!.Value };
-
-            var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solution.FullName, idleTimeout);
-            if (client is null)
-                return;
-
-            await using (client)
-            {
-                var res = await client.SendAsync("definition", @params);
-                JsonOutput.Write(res.Ok ? res.Result : (object)res.Error!);
-            }
+            await Entry.ExecuteAsync(solution.FullName, file, line, col, symbol, idleTimeout);
         });
 
         return cmd;
     }
 
-    private static void ValidateArgs(FileInfo? file, int? line, int? col, string? symbol)
-    {
-        var hasSymbol = !string.IsNullOrWhiteSpace(symbol);
-        var hasAnyLocation = file is not null || line is not null || col is not null;
-        var hasCompleteLocation = file is not null && line is not null && col is not null;
-
-        if (hasSymbol == hasAnyLocation)
-            throw new ArgumentException(
-                "Provide exactly one input mode: either --symbol OR --file --line --col");
-
-        if (hasAnyLocation && !hasCompleteLocation)
-            throw new ArgumentException(
-                "Location mode requires all of --file --line --col");
-    }
 }

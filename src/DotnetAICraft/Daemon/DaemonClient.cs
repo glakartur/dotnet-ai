@@ -54,39 +54,26 @@ public sealed class DaemonClient : IAsyncDisposable
         if (!DaemonIdleTimeoutParser.TryParseOptional(idleTimeout, out var parsedTimeout, out var parseError))
             throw new DaemonClientValidationException(parseError!);
 
-        var client = await TryConnectAsync(solutionPath);
-        if (client is not null)
-        {
-            if (parsedTimeout is not null)
-            {
-                try
-                {
-                    await ApplyIdleTimeoutAsync(client, parsedTimeout);
-                }
-                catch
-                {
-                    await client.DisposeAsync();
-                    throw;
-                }
-            }
+        var timeout = startTimeout ?? TimeSpan.FromSeconds(120);
+        var outcome = await DaemonStartupCoordinator.ConnectOrStartAsync(
+            solutionPath,
+            parsedTimeout,
+            readyTimeout: timeout);
 
-            return client;
+        if (outcome.Type == DaemonStartupOutcomeType.Failed)
+            throw new DaemonClientValidationException(outcome.Error ?? new ErrorInfo("DAEMON_STARTUP_FAILED", "Daemon startup failed."));
+
+        if (outcome.Type == DaemonStartupOutcomeType.StartedNew)
+        {
+            Console.Error.WriteLine("[dotnet-aicraft] Starting analysis daemon (first run loads the solution)...");
+            Console.Error.WriteLine("[dotnet-aicraft] Ready.");
         }
 
-        Console.Error.WriteLine("[dotnet-aicraft] Starting analysis daemon (first run loads the solution)...");
-        await StartDaemonProcessAsync(solutionPath, parsedTimeout);
-
-        var timeout = startTimeout ?? TimeSpan.FromSeconds(120);
-        client = await WaitForDaemonAsync(solutionPath, timeout)
-            ?? throw new TimeoutException(
-                $"Daemon did not start within {timeout.TotalSeconds}s. " +
-                $"Check stderr above for errors.");
-
-        Console.Error.WriteLine("[dotnet-aicraft] Ready.");
-        return client;
+        return outcome.Client
+            ?? throw new InvalidOperationException("Daemon startup coordinator returned no client.");
     }
 
-    private static async Task StartDaemonProcessAsync(string solutionPath, DaemonIdleTimeoutSetting? idleTimeout)
+    internal static Task<Process> StartDaemonProcessAsync(string solutionPath, DaemonIdleTimeoutSetting? idleTimeout)
     {
         var exe = Environment.ProcessPath
             ?? throw new InvalidOperationException("Cannot determine current process path.");
@@ -116,10 +103,11 @@ public sealed class DaemonClient : IAsyncDisposable
             proc.StartInfo.ArgumentList.Add(arg);
 
         proc.Start();
-        // Detach — daemon outlives this CLI process
+        // Keep process handle so callers can detect early startup exit.
+        return Task.FromResult(proc);
     }
 
-    private static async Task<DaemonClient?> WaitForDaemonAsync(string solutionPath, TimeSpan timeout)
+    internal static async Task<(DaemonClient? Client, int? ExitCode)> WaitForDaemonAsync(string solutionPath, TimeSpan timeout, Process? startupProcess = null)
     {
         var deadline = DateTime.UtcNow + timeout;
         var delay    = 200;
@@ -130,9 +118,17 @@ public sealed class DaemonClient : IAsyncDisposable
             delay = Math.Min(delay * 2, 2000); // exponential backoff up to 2s
 
             var client = await TryConnectAsync(solutionPath);
-            if (client is not null) return client;
+            if (client is not null)
+                return (client, null);
+
+            if (startupProcess is not null && startupProcess.HasExited)
+                return (null, startupProcess.ExitCode);
         }
-        return null;
+
+        if (startupProcess is not null && startupProcess.HasExited)
+            return (null, startupProcess.ExitCode);
+
+        return (null, null);
     }
 
     // ── Messaging ─────────────────────────────────────────────────────────────
@@ -163,7 +159,65 @@ public sealed class DaemonClient : IAsyncDisposable
 
         return RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
             ? $@"\\.\pipe\dotnet-aicraft-{hash}"
-            : Path.Combine(Path.GetTempPath(), $"dotnet-aicraft-{hash}.sock");
+            : Path.Combine(GetRuntimeDirectory(), $"dotnet-aicraft-{hash}.sock");
+    }
+
+    internal static string GetRuntimeDirectory()
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            return Path.GetTempPath();
+
+        var xdgRuntimeDir = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
+        var baseDir = GetSecureRuntimeBaseDirectory(xdgRuntimeDir) ?? Path.GetTempPath();
+
+        var userScopedDir = Path.Combine(baseDir, $"dotnet-aicraft-{Environment.UserName}");
+        Directory.CreateDirectory(userScopedDir);
+
+        try
+        {
+            File.SetUnixFileMode(userScopedDir,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        catch
+        {
+            // Best effort only; not all filesystems support Unix mode bits.
+        }
+
+        return userScopedDir;
+    }
+
+    private static string? GetSecureRuntimeBaseDirectory(string? candidate)
+    {
+        if (OperatingSystem.IsWindows())
+            return null;
+
+        if (string.IsNullOrWhiteSpace(candidate))
+            return null;
+
+        if (!Path.IsPathRooted(candidate))
+            return null;
+
+        if (!Directory.Exists(candidate))
+            return null;
+
+        try
+        {
+            var attrs = File.GetAttributes(candidate);
+            if (attrs.HasFlag(FileAttributes.ReparsePoint))
+                return null;
+
+            var mode = File.GetUnixFileMode(candidate);
+            var groupWritable = mode.HasFlag(UnixFileMode.GroupWrite);
+            var otherWritable = mode.HasFlag(UnixFileMode.OtherWrite);
+            if (groupWritable || otherWritable)
+                return null;
+
+            return candidate;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     // ── Disposal ──────────────────────────────────────────────────────────────
@@ -175,7 +229,7 @@ public sealed class DaemonClient : IAsyncDisposable
         _socket.Dispose();
     }
 
-    private static async Task ApplyIdleTimeoutAsync(DaemonClient client, DaemonIdleTimeoutSetting setting)
+    internal static async Task ApplyIdleTimeoutAsync(DaemonClient client, DaemonIdleTimeoutSetting setting)
     {
         var value = setting.Enabled ? setting.Normalized : "off";
         var response = await client.SendAsync("setIdleTimeout", new { value });

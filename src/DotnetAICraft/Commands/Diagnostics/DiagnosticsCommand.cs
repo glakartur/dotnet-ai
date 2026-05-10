@@ -1,6 +1,6 @@
 using System.CommandLine;
 using DotnetAICraft.Daemon;
-using DotnetAICraft.Output;
+using DotnetAICraft.Commands.Diagnostics;
 
 namespace DotnetAICraft.Commands;
 
@@ -39,40 +39,7 @@ public static class DiagnosticsCommand
             var file = parseResult.GetValue(fileOpt);
             var idleTimeout = parseResult.GetValue(idleTimeoutOption);
 
-            if (!DaemonServer.TryParseDiagnosticsSeverity(severity, out _, out var normalizedSeverity))
-            {
-                JsonOutput.WriteError(
-                    "INVALID_PARAMS",
-                    "Invalid 'severity' parameter.",
-                    new { acceptedValues = AcceptedSeverities });
-                return;
-            }
-
-            var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solution.FullName, idleTimeout);
-            if (client is null)
-                return;
-
-            await using (client)
-            {
-                var res = await client.SendAsync("diagnostics", new
-                {
-                    severity = normalizedSeverity,
-                    project,
-                    file = file?.FullName
-                });
-
-                if (res.Ok)
-                {
-                    JsonOutput.Write(res.Result);
-                    return;
-                }
-
-                var error = res.Error;
-                JsonOutput.WriteError(
-                    error?.Code ?? "UNKNOWN_ERROR",
-                    error?.Message ?? "Unknown daemon error.",
-                    error?.Details);
-            }
+            await Entry.ExecuteAsync(solution.FullName, severity, project, file, idleTimeout, AcceptedSeverities);
         });
 
         return cmd;

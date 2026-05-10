@@ -1,6 +1,6 @@
 ﻿using System.CommandLine;
 using DotnetAICraft.Daemon;
-using DotnetAICraft.Output;
+using DotnetAICraft.Commands.Callers;
 
 namespace DotnetAICraft.Commands;
 
@@ -48,39 +48,15 @@ public static class CallersCommand
             var depth = parseResult.GetRequiredValue(depthOpt);
             var idleTimeout = parseResult.GetValue(idleTimeoutOption);
 
-            ValidateArgs(file, line, col, symbol);
-
-            if (!DaemonServer.TryParseCallGraphDirection(direction, out var normalizedDirection))
-            {
-                JsonOutput.WriteError(
-                    "INVALID_PARAMS",
-                    "Invalid 'direction' parameter.",
-                    new { acceptedValues = DaemonServer.CallGraphDirectionAcceptedValues });
-                return;
-            }
-
-            if (!DaemonServer.TryNormalizeCallGraphDepth(depth, out var normalizedDepth, out var depthError))
-            {
-                JsonOutput.WriteError(
-                    depthError?.Code ?? "INVALID_PARAMS",
-                    depthError?.Message ?? "Invalid call graph depth parameter.",
-                    depthError?.Details);
-                return;
-            }
-
-            var @params = !string.IsNullOrWhiteSpace(symbol)
-                ? (object)new { symbol = symbol.Trim(), direction = normalizedDirection, depth = normalizedDepth }
-                : new { file = file!.FullName, line = line!.Value, col = col!.Value, direction = normalizedDirection, depth = normalizedDepth };
-
-            var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solution.FullName, idleTimeout);
-            if (client is null)
-                return;
-
-            await using (client)
-            {
-                var res = await client.SendAsync("callers", @params);
-                JsonOutput.Write(res.Ok ? res.Result : (object)res.Error!);
-            }
+            await Entry.ExecuteAsync(
+                solution.FullName,
+                file,
+                line,
+                col,
+                symbol,
+                direction,
+                depth,
+                idleTimeout);
         });
 
         return cmd;
@@ -88,11 +64,6 @@ public static class CallersCommand
 
     private static void ValidateArgs(FileInfo? file, int? line, int? col, string? symbol)
     {
-        if (string.IsNullOrWhiteSpace(symbol) && (file is null || line is null || col is null))
-        {
-            throw new ArgumentException(
-                "Provide either --symbol OR all of --file --line --col");
-        }
+        Validation.ValidateCliModeArgs(file, line, col, symbol);
     }
 }
-
