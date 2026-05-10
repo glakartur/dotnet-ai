@@ -127,6 +127,25 @@ public sealed class DaemonClient : IAsyncDisposable
         return (null, null);
     }
 
+    internal static ErrorInfo BuildStartupProcessExitedError(
+        string solutionPath,
+        int exitCode,
+        TimeSpan timeout)
+    {
+        if (DaemonStartupCoordinator.TryBuildInvalidStaleSocketTypeError(solutionPath, "start", out var staleSocketError))
+            return staleSocketError!;
+
+        return new ErrorInfo(
+            "DAEMON_STARTUP_PROCESS_EXITED",
+            "Daemon process exited before becoming ready.",
+            new
+            {
+                stage = "start",
+                exitCode,
+                timeoutMs = (long)timeout.TotalMilliseconds
+            });
+    }
+
     // ── Messaging ─────────────────────────────────────────────────────────────
 
     public async Task<DaemonResponse> SendAsync(string command, object? @params = null)

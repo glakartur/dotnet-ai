@@ -86,10 +86,11 @@ public static class DaemonStartupCoordinator
         {
             if (exitCode is not null)
             {
-                return DaemonStartupOutcome.Failed(new ErrorInfo(
-                    "DAEMON_STARTUP_PROCESS_EXITED",
-                    "Daemon process exited before becoming ready.",
-                    new { stage = "start", exitCode, timeoutMs = (long)effectiveReadyTimeout.TotalMilliseconds }), "start");
+                var startupError = DaemonClient.BuildStartupProcessExitedError(
+                    solutionPath,
+                    exitCode.Value,
+                    effectiveReadyTimeout);
+                return DaemonStartupOutcome.Failed(startupError, "start");
             }
 
             return DaemonStartupOutcome.Failed(new ErrorInfo(
@@ -99,6 +100,15 @@ public static class DaemonStartupCoordinator
         }
 
         return DaemonStartupOutcome.Started(started);
+    }
+
+    internal static bool TryBuildInvalidStaleSocketTypeError(
+        string solutionPath,
+        string stage,
+        out ErrorInfo? error)
+    {
+        var socketPath = DaemonClient.GetSocketPath(solutionPath);
+        return TryBuildInvalidStaleSocketTypeErrorFromPath(socketPath, stage, out error);
     }
 
     public static async Task<DaemonServerStartDecision> PrepareServerStartAsync(
@@ -167,18 +177,15 @@ public static class DaemonStartupCoordinator
         error = null;
         var socketPath = DaemonClient.GetSocketPath(solutionPath);
 
-        if (!File.Exists(socketPath))
+        if (!SocketArtifactExists(socketPath))
             return true;
 
         try
         {
             var attrs = File.GetAttributes(socketPath);
-            if (attrs.HasFlag(FileAttributes.ReparsePoint))
+            if (!IsRegularFileArtifact(attrs))
             {
-                error = new ErrorInfo(
-                    "DAEMON_STARTUP_STALE_SOCKET_INVALID_TYPE",
-                    "Refusing to delete stale daemon socket because path is a reparse point.",
-                    new { stage = "liveness", socketPath });
+                var _ = TryBuildInvalidStaleSocketTypeErrorFromPath(socketPath, "liveness", out error);
                 return false;
             }
 
@@ -193,5 +200,86 @@ public static class DaemonStartupCoordinator
                 new { stage = "liveness", socketPath, reason = ex.Message });
             return false;
         }
+    }
+
+    private static bool TryBuildInvalidStaleSocketTypeErrorFromPath(
+        string socketPath,
+        string stage,
+        out ErrorInfo? error)
+    {
+        error = null;
+        if (!SocketArtifactExists(socketPath))
+            return false;
+
+        try
+        {
+            var attrs = File.GetAttributes(socketPath);
+            if (IsRegularFileArtifact(attrs))
+                return false;
+
+            error = BuildInvalidStaleSocketTypeError(stage, socketPath, attrs);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            error = BuildInvalidStaleSocketTypeError(stage, socketPath, null, ex.Message);
+            return true;
+        }
+    }
+
+    private static ErrorInfo BuildInvalidStaleSocketTypeError(
+        string stage,
+        string socketPath,
+        FileAttributes? attrs,
+        string? reason = null)
+    {
+        var artifactType = attrs is null
+            ? "unknown"
+            : ClassifyArtifactType(attrs.Value);
+
+        var message = attrs.HasValue && attrs.Value.HasFlag(FileAttributes.ReparsePoint)
+            ? "Refusing to delete stale daemon socket because path is a reparse point."
+            : "Refusing to delete stale daemon socket because path is not a regular file.";
+
+        object? remediation = null;
+        if (OperatingSystem.IsWindows())
+        {
+            remediation = new
+            {
+                summary = "Remove the stale artifact manually and retry daemon startup.",
+                powershell = $"Remove-Item -LiteralPath '{socketPath}' -Force",
+                cmdDelete = $"del /f \"{socketPath}\"",
+                cmdJunction = $"rmdir \"{socketPath}\""
+            };
+        }
+
+        return new ErrorInfo(
+            "DAEMON_STARTUP_STALE_SOCKET_INVALID_TYPE",
+            message,
+            new
+            {
+                stage,
+                socketPath,
+                artifactType,
+                reason,
+                remediation
+            });
+    }
+
+    private static bool SocketArtifactExists(string socketPath)
+        => File.Exists(socketPath) || Directory.Exists(socketPath);
+
+    private static bool IsRegularFileArtifact(FileAttributes attrs)
+        => !attrs.HasFlag(FileAttributes.Directory) && !attrs.HasFlag(FileAttributes.ReparsePoint);
+
+    private static string ClassifyArtifactType(FileAttributes attrs)
+    {
+        if (attrs.HasFlag(FileAttributes.ReparsePoint))
+            return "reparse-point";
+
+        if (attrs.HasFlag(FileAttributes.Directory))
+            return "directory";
+
+        return "file";
     }
 }
