@@ -34,7 +34,7 @@ internal static class UseCase
         await using (client)
         {
             var res = await client.SendAsync("shutdown");
-            return res.Ok ? (res.Result, null) : (null, res.Error);
+            return res.Error is null ? (res.Data, null) : (null, res.Error);
         }
     }
 
@@ -47,7 +47,9 @@ internal static class UseCase
         await using (client)
         {
             var res = await client.SendAsync("status");
-            return res.Ok ? res.Result! : (object)(res.Error ?? new ErrorInfo("UNKNOWN_ERROR", "Unknown daemon error."));
+            return res.Error is null
+                ? res.Data!
+                : new { error = res.Error };
         }
     }
 
@@ -60,7 +62,7 @@ internal static class UseCase
         await using (client)
         {
             var res = await client.SendAsync("reload");
-            return res.Ok ? (res.Result, null) : (null, res.Error);
+            return res.Error is null ? (res.Data, null) : (null, res.Error);
         }
     }
 }

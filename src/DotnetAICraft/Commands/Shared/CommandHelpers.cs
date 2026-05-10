@@ -1,4 +1,5 @@
 using DotnetAICraft.Daemon;
+using DotnetAICraft.Models;
 using DotnetAICraft.Output;
 
 namespace DotnetAICraft.Commands.Shared;
@@ -18,5 +19,20 @@ internal static class CommandHelpers
             JsonOutput.WriteError(ex.Error.Code, ex.Error.Message, ex.Error.Details);
             return null;
         }
+    }
+
+    public static object? GetDataOrNull(DaemonResponse response)
+        => response.Data;
+
+    public static bool TryHandleError(DaemonResponse response)
+    {
+        if (response.Error is null)
+            return false;
+
+        JsonOutput.WriteError(
+            response.Error.Code,
+            response.Error.Message,
+            response.Error.Details);
+        return true;
     }
 }

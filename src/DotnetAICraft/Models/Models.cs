@@ -81,7 +81,11 @@ public record DaemonStatus(
     int Projects,
     int Documents,
     DateTime LoadedAt,
-    TimeSpan Uptime);
+    TimeSpan Uptime,
+    string LoadState,
+    DateTime? LastLoadAttemptAt,
+    string? LastLoadErrorCode,
+    string? LastLoadErrorMessage);
 
 public record DiagnosticResult(
     string Project,
@@ -124,8 +128,7 @@ public record DaemonRequest(
 
 public record DaemonResponse(
     string Id,
-    bool Ok,
-    object? Result,
+    object? Data,
     ErrorInfo? Error,
     ResponseMeta? Meta);
 
@@ -138,4 +141,3 @@ public record IdleTimeoutUpdateResult(
     string Mode,
     string? Value,
     bool Changed);
-

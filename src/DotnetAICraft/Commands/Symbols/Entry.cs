@@ -41,7 +41,10 @@ internal static class Entry
                 offset = normalizedOffset
             });
 
-            JsonOutput.Write(res.Ok ? res.Result : (object)res.Error!);
+            if (CommandHelpers.TryHandleError(res))
+                return;
+
+            JsonOutput.Write(CommandHelpers.GetDataOrNull(res));
         }
     }
 }

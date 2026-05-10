@@ -34,16 +34,8 @@ internal static class Entry
                 file = file?.FullName
             });
 
-            if (res.Ok)
-            {
-                JsonOutput.Write(res.Result);
-                return;
-            }
-
-            JsonOutput.WriteError(
-                res.Error?.Code ?? "UNKNOWN_ERROR",
-                res.Error?.Message ?? "Unknown daemon error.",
-                res.Error?.Details);
+            if (!CommandHelpers.TryHandleError(res))
+                JsonOutput.Write(CommandHelpers.GetDataOrNull(res));
         }
     }
 }

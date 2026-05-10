@@ -28,7 +28,10 @@ internal static class Entry
         await using (client)
         {
             var res = await client.SendAsync(CommandName, @params);
-            JsonOutput.Write(res.Ok ? res.Result : (object)res.Error!);
+            if (CommandHelpers.TryHandleError(res))
+                return;
+
+            JsonOutput.Write(CommandHelpers.GetDataOrNull(res));
         }
     }
 }

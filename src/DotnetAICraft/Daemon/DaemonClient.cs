@@ -233,10 +233,10 @@ public sealed class DaemonClient : IAsyncDisposable
     {
         var value = setting.Enabled ? setting.Normalized : "off";
         var response = await client.SendAsync("setIdleTimeout", new { value });
-        if (response.Ok)
+        if (response.Error is null)
             return;
 
-        var error = response.Error ?? new ErrorInfo("INVALID_IDLE_TIMEOUT", "Invalid idle timeout value.");
+        var error = response.Error;
         throw new DaemonClientValidationException(error);
     }
 }

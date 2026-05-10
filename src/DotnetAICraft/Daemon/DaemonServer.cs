@@ -15,17 +15,28 @@ namespace DotnetAICraft.Daemon;
 
 public sealed class DaemonServer : IAsyncDisposable
 {
+    private const int UnloadedIdleTimeoutMinutes = 5;
+
     private readonly string _solutionPath;
     private readonly DaemonStartupLock? _startupLock;
     private readonly CancellationTokenSource _cts = new();
+    private readonly object _metadataReloadLock = new();
     private MSBuildWorkspace? _workspace;
     private Solution? _solution;
     private DateTime _loadedAt;
+    private readonly DateTime _startedAt = DateTime.UtcNow;
+    private DateTime? _lastLoadAttemptAt;
+    private ErrorInfo? _lastLoadError;
+    private DaemonLoadState _loadState = DaemonLoadState.Unloaded;
     private FileSystemWatcher? _watcher;
+    private FileSystemWatcher? _metadataWatcher;
+    private CancellationTokenSource? _metadataReloadDebounceCts;
     private readonly SemaphoreSlim _solutionLock = new(1, 1);
+    private readonly SemaphoreSlim _metadataReloadSingleFlight = new(1, 1);
     private readonly object _idleLock = new();
     private DaemonLifecycleState _lifecycleState = DaemonLifecycleState.Running;
     private DaemonIdleTimeoutSetting _idleTimeout = DaemonIdleTimeoutSetting.Default;
+    private bool _hasExplicitIdleTimeoutOverride;
     private DateTime _idleDeadlineUtc;
     private CancellationTokenSource? _idleWatcherCts;
     private int _activeRequests;
@@ -84,13 +95,17 @@ public sealed class DaemonServer : IAsyncDisposable
     public DaemonServer(string solutionPath)
     {
         _solutionPath = Path.GetFullPath(solutionPath);
+        _loadedAt = _startedAt;
     }
 
     public DaemonServer(string solutionPath, DaemonIdleTimeoutSetting? idleTimeout)
         : this(solutionPath)
     {
         if (idleTimeout is not null)
+        {
             _idleTimeout = idleTimeout;
+            _hasExplicitIdleTimeoutOverride = true;
+        }
     }
 
     public DaemonServer(string solutionPath, DaemonIdleTimeoutSetting? idleTimeout, DaemonStartupLock? startupLock)
@@ -101,9 +116,6 @@ public sealed class DaemonServer : IAsyncDisposable
 
     public async Task RunAsync()
     {
-        Log($"Loading solution: {_solutionPath}");
-        await LoadSolutionAsync();
-
         var socketPath = DaemonClient.GetSocketPath(_solutionPath);
 
         var endpoint = new UnixDomainSocketEndPoint(socketPath);
@@ -124,10 +136,13 @@ public sealed class DaemonServer : IAsyncDisposable
                 UnixFileMode.UserRead | UnixFileMode.UserWrite);
 
         StartFileWatcher();
+        StartMetadataWatcher();
+
+        Log($"Attempting initial solution load: {_solutionPath}");
+        await TryLoadSolutionAsync();
 
         Log($"Daemon ready. Socket: {socketPath}");
-        Log($"Projects: {_solution!.Projects.Count()}, " +
-            $"Documents: {_solution.Projects.Sum(p => p.Documents.Count())}");
+        Log($"Load state: {_loadState.ToString().ToLowerInvariant()}");
 
         ResetIdleDeadline();
 
@@ -167,10 +182,8 @@ public sealed class DaemonServer : IAsyncDisposable
 
             if (!CanAcceptRequests() && request.Command != "shutdown")
             {
-                var unavailable = new DaemonResponse(
+                var unavailable = CreateErrorResponse(
                     request.Id,
-                    false,
-                    null,
                     new ErrorInfo("DAEMON_DRAINING", "Daemon is shutting down and not accepting new requests."),
                     null);
 
@@ -189,9 +202,9 @@ public sealed class DaemonServer : IAsyncDisposable
             Log($"Client error: {ex.Message}");
             try
             {
-                var errResponse = new DaemonResponse(
-                    "", false, null,
-                    new ErrorInfo("INTERNAL_ERROR", ex.Message),
+                var errResponse = CreateErrorResponse(
+                    "",
+                    new ErrorInfo("INTERNAL_ERROR", "Request processing failed.", new { hint = "Check daemon logs for details." }),
                     null);
                 await writer.WriteLineAsync(JsonOutput.Serialize(errResponse).AsMemory(), CancellationToken.None);
             }
@@ -226,22 +239,41 @@ public sealed class DaemonServer : IAsyncDisposable
                 _ => throw new InvalidOperationException($"Unknown command: {req.Command}")
             };
 
-            return new DaemonResponse(req.Id, true, result, null,
+            return CreateSuccessResponse(
+                req.Id,
+                result,
                 new ResponseMeta(sw.ElapsedMilliseconds, _loadedAt));
         }
         catch (DaemonValidationException ex)
         {
-            return new DaemonResponse(req.Id, false, null,
+            return CreateErrorResponse(
+                req.Id,
                 ex.Error,
                 new ResponseMeta(sw.ElapsedMilliseconds, _loadedAt));
         }
         catch (Exception ex)
         {
-            return new DaemonResponse(req.Id, false, null,
-                new ErrorInfo(ex.GetType().Name.ToUpperSnakeCase(), ex.Message),
+            Log($"Dispatch error ({req.Command}): {ex.Message}");
+            return CreateErrorResponse(
+                req.Id,
+                new ErrorInfo("INTERNAL_ERROR", "Unexpected daemon error.", new { hint = "Check daemon logs for details." }),
                 new ResponseMeta(sw.ElapsedMilliseconds, _loadedAt));
         }
     }
+
+    private static DaemonResponse CreateSuccessResponse(string id, object? data, ResponseMeta? meta)
+        => new(
+            Id: id,
+            Data: data,
+            Error: null,
+            Meta: meta);
+
+    private static DaemonResponse CreateErrorResponse(string id, ErrorInfo error, ResponseMeta? meta)
+        => new(
+            Id: id,
+            Data: null,
+            Error: error,
+            Meta: meta);
 
     // ── Command handlers ──────────────────────────────────────────────────────
 
@@ -402,25 +434,46 @@ public sealed class DaemonServer : IAsyncDisposable
 
     private object HandleStatus()
     {
-        var s = GetSolution();
+        var loadState = _loadState;
+        var lastLoadAttemptAt = _lastLoadAttemptAt;
+        var lastLoadError = _lastLoadError;
+        var loadedAt = _loadedAt;
+        var uptimeBase = loadState == DaemonLoadState.Loaded ? loadedAt : _startedAt;
+
+        var projects = 0;
+        var documents = 0;
+
+        if (_solution is Solution solution)
+        {
+            projects = solution.Projects.Count();
+            documents = solution.Projects.Sum(p => p.Documents.Count());
+        }
+
         return new Models.DaemonStatus(
             Running:      true,
             SolutionPath: _solutionPath,
-            Projects:     s.Projects.Count(),
-            Documents:    s.Projects.Sum(p => p.Documents.Count()),
-            LoadedAt:     _loadedAt,
-            Uptime:       DateTime.UtcNow - _loadedAt);
+            Projects:     projects,
+            Documents:    documents,
+            LoadedAt:     loadedAt,
+            Uptime:       DateTime.UtcNow - uptimeBase,
+            LoadState:    loadState.ToString().ToLowerInvariant(),
+            LastLoadAttemptAt: lastLoadAttemptAt,
+            LastLoadErrorCode: lastLoadError?.Code,
+            LastLoadErrorMessage: lastLoadError?.Message);
     }
 
     private async Task<object> HandleReloadAsync(CancellationToken ct)
     {
-        await _solutionLock.WaitAsync(ct);
-        try
+        var reloaded = await TryLoadSolutionAsync(ct);
+        return new
         {
-            await LoadSolutionAsync();
-            return new { reloaded = true, loadedAt = _loadedAt };
-        }
-        finally { _solutionLock.Release(); }
+            reloaded,
+            loadState = _loadState.ToString().ToLowerInvariant(),
+            loadedAt = _loadedAt,
+            lastLoadAttemptAt = _lastLoadAttemptAt,
+            lastLoadErrorCode = _lastLoadError?.Code,
+            lastLoadErrorMessage = _lastLoadError?.Message
+        };
     }
 
     private object HandleShutdown()
@@ -450,11 +503,12 @@ public sealed class DaemonServer : IAsyncDisposable
         lock (_idleLock)
         {
             DateTime nextDeadlineUtc;
-            if (setting.Enabled)
+            var effectiveSetting = GetEffectiveIdleTimeoutSetting(setting);
+            if (effectiveSetting.Enabled)
             {
                 try
                 {
-                    nextDeadlineUtc = DateTime.UtcNow + setting.Duration;
+                    nextDeadlineUtc = DateTime.UtcNow + effectiveSetting.Duration;
                 }
                 catch (ArgumentOutOfRangeException)
                 {
@@ -471,10 +525,11 @@ public sealed class DaemonServer : IAsyncDisposable
 
             var changed = !_idleTimeout.Equals(setting);
             _idleTimeout = setting;
+            _hasExplicitIdleTimeoutOverride = true;
             _idleDeadlineUtc = nextDeadlineUtc;
 
             CancelIdleWatcherUnsafe();
-            if (setting.Enabled)
+            if (effectiveSetting.Enabled)
             {
                 StartIdleWatcherUnsafe();
             }
@@ -491,7 +546,8 @@ public sealed class DaemonServer : IAsyncDisposable
     {
         lock (_idleLock)
         {
-            if (!_idleTimeout.Enabled)
+            var effectiveSetting = GetEffectiveIdleTimeoutSetting(_idleTimeout);
+            if (!effectiveSetting.Enabled)
             {
                 _idleDeadlineUtc = DateTime.MaxValue;
                 return;
@@ -499,7 +555,7 @@ public sealed class DaemonServer : IAsyncDisposable
 
             try
             {
-                _idleDeadlineUtc = DateTime.UtcNow + _idleTimeout.Duration;
+                _idleDeadlineUtc = DateTime.UtcNow + effectiveSetting.Duration;
             }
             catch (ArgumentOutOfRangeException)
             {
@@ -516,7 +572,7 @@ public sealed class DaemonServer : IAsyncDisposable
 
     private void StartIdleWatcherUnsafe()
     {
-        if (!_idleTimeout.Enabled || _cts.IsCancellationRequested)
+        if (!GetEffectiveIdleTimeoutSetting(_idleTimeout).Enabled || _cts.IsCancellationRequested)
             return;
 
         _idleWatcherCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
@@ -538,7 +594,7 @@ public sealed class DaemonServer : IAsyncDisposable
         TimeSpan delay;
         lock (_idleLock)
         {
-            if (!_idleTimeout.Enabled)
+            if (!GetEffectiveIdleTimeoutSetting(_idleTimeout).Enabled)
                 return;
 
             delay = _idleDeadlineUtc - DateTime.UtcNow;
@@ -557,7 +613,7 @@ public sealed class DaemonServer : IAsyncDisposable
 
         lock (_idleLock)
         {
-            if (!_idleTimeout.Enabled)
+            if (!GetEffectiveIdleTimeoutSetting(_idleTimeout).Enabled)
                 return;
 
             if (_activeRequests > 0)
@@ -568,6 +624,17 @@ public sealed class DaemonServer : IAsyncDisposable
         }
 
         BeginShutdown();
+    }
+
+    private DaemonIdleTimeoutSetting GetEffectiveIdleTimeoutSetting(DaemonIdleTimeoutSetting configured)
+    {
+        if (_hasExplicitIdleTimeoutOverride)
+            return configured;
+
+        if (_loadState == DaemonLoadState.Unloaded)
+            return new DaemonIdleTimeoutSetting(true, TimeSpan.FromMinutes(UnloadedIdleTimeoutMinutes), $"{UnloadedIdleTimeoutMinutes}m");
+
+        return configured;
     }
 
     private bool CanAcceptRequests()
@@ -615,20 +682,59 @@ public sealed class DaemonServer : IAsyncDisposable
 
     // ── Solution management ───────────────────────────────────────────────────
 
-    private async Task LoadSolutionAsync()
+    private async Task<bool> TryLoadSolutionAsync(CancellationToken ct = default)
     {
-        _workspace?.Dispose();
-        var (workspace, solution) = await WorkspaceLoader.LoadAsync(_solutionPath);
-        _workspace  = workspace;
-        _solution   = solution;
-        _loadedAt   = DateTime.UtcNow;
+        await _solutionLock.WaitAsync(ct);
+        try
+        {
+            _lastLoadAttemptAt = DateTime.UtcNow;
 
-        Log($"Solution loaded: {solution.Projects.Count()} projects, " +
-            $"{solution.Projects.Sum(p => p.Documents.Count())} documents");
+            _workspace?.Dispose();
+            _workspace = null;
+            _solution = null;
+
+            var (workspace, solution) = await WorkspaceLoader.LoadAsync(_solutionPath);
+            _workspace = workspace;
+            _solution = solution;
+            _loadedAt = DateTime.UtcNow;
+            _loadState = DaemonLoadState.Loaded;
+            _lastLoadError = null;
+
+            Log($"Solution loaded: {solution.Projects.Count()} projects, " +
+                $"{solution.Projects.Sum(p => p.Documents.Count())} documents");
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _loadState = DaemonLoadState.Unloaded;
+            _lastLoadError = new ErrorInfo("SOLUTION_LOAD_FAILED", "Failed to load solution.", new { exceptionType = ex.GetType().Name });
+            Log($"Solution load failed: {ex.Message}");
+            return false;
+        }
+        finally
+        {
+            _solutionLock.Release();
+            ResetIdleDeadline();
+        }
     }
 
-    private Solution GetSolution() => _solution
-        ?? throw new InvalidOperationException("Solution not loaded.");
+    private Solution GetSolution()
+    {
+        if (_solution is not null)
+            return _solution;
+
+        throw new DaemonValidationException(new ErrorInfo(
+            "SOLUTION_UNAVAILABLE",
+            "Solution is currently unavailable.",
+            new
+            {
+                solutionPath = _solutionPath,
+                loadState = _loadState.ToString().ToLowerInvariant(),
+                lastLoadErrorCode = _lastLoadError?.Code,
+                hint = "Run 'server reload' or fix the solution/project files and retry."
+            }));
+    }
 
     // ── File watching ─────────────────────────────────────────────────────────
 
@@ -663,6 +769,89 @@ public sealed class DaemonServer : IAsyncDisposable
 
         _watcher.Changed += OnChange;
         _watcher.Created += OnChange;
+    }
+
+    private void StartMetadataWatcher()
+    {
+        var dir = Path.GetDirectoryName(_solutionPath)!;
+        _metadataWatcher = new FileSystemWatcher(dir)
+        {
+            IncludeSubdirectories = true,
+            EnableRaisingEvents = true,
+            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName
+        };
+
+        void OnMetadataChange(object _, FileSystemEventArgs e)
+        {
+            if (!IsMetadataReloadCandidate(e.FullPath))
+                return;
+
+            ScheduleMetadataReload();
+        }
+
+        _metadataWatcher.Changed += OnMetadataChange;
+        _metadataWatcher.Created += OnMetadataChange;
+        _metadataWatcher.Renamed += (_, e) =>
+        {
+            if (IsMetadataReloadCandidate(e.FullPath) || IsMetadataReloadCandidate(e.OldFullPath))
+                ScheduleMetadataReload();
+        };
+    }
+
+    private static bool IsMetadataReloadCandidate(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        var fileName = Path.GetFileName(path);
+        if (string.Equals(fileName, "Directory.Build.props", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(fileName, "Directory.Build.targets", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var ext = Path.GetExtension(path);
+        return ext.Equals(".sln", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".csproj", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".vbproj", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".fsproj", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void ScheduleMetadataReload()
+    {
+        CancellationTokenSource cts;
+        lock (_metadataReloadLock)
+        {
+            _metadataReloadDebounceCts?.Cancel();
+            _metadataReloadDebounceCts?.Dispose();
+            _metadataReloadDebounceCts = new CancellationTokenSource();
+            cts = _metadataReloadDebounceCts;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(500), cts.Token);
+                await TriggerMetadataReloadAsync(cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }, CancellationToken.None);
+    }
+
+    private async Task TriggerMetadataReloadAsync(CancellationToken ct)
+    {
+        if (!await _metadataReloadSingleFlight.WaitAsync(0, ct))
+            return;
+
+        try
+        {
+            await TryLoadSolutionAsync(ct);
+        }
+        finally
+        {
+            _metadataReloadSingleFlight.Release();
+        }
     }
 
     private async Task ApplyFileChangeAsync(string filePath)
@@ -1734,11 +1923,19 @@ public sealed class DaemonServer : IAsyncDisposable
         }
 
         _watcher?.Dispose();
+        _metadataWatcher?.Dispose();
+        lock (_metadataReloadLock)
+        {
+            _metadataReloadDebounceCts?.Cancel();
+            _metadataReloadDebounceCts?.Dispose();
+            _metadataReloadDebounceCts = null;
+        }
         if (_startupLock is not null)
             await _startupLock.DisposeAsync();
         _cts.Dispose();
         _workspace?.Dispose();
         _solutionLock.Dispose();
+        _metadataReloadSingleFlight.Dispose();
     }
 }
 
@@ -1747,6 +1944,12 @@ public enum DaemonLifecycleState
     Running,
     Draining,
     Stopped
+}
+
+public enum DaemonLoadState
+{
+    Unloaded,
+    Loaded
 }
 
 public sealed class DaemonValidationException : Exception
