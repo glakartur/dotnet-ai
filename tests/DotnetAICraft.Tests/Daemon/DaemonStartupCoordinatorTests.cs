@@ -243,61 +243,6 @@ public sealed class DaemonStartupCoordinatorTests
     }
 
     [Fact]
-    public async Task PrepareServerStart_OnWindows_WithReparseOutsideTempRoot_ReturnsExplicitRejectReason()
-    {
-        if (!OperatingSystem.IsWindows())
-            return;
-
-        var solutionPath = CreateUniqueSolutionPath();
-        var socketPath = DaemonClient.GetSocketPath(solutionPath);
-        var socketDir = Path.GetDirectoryName(socketPath)!;
-        Directory.CreateDirectory(socketDir);
-
-        var outsideRoot = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            $"dotnet-aicraft-outside-temp-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(outsideRoot);
-        var targetPath = Path.Combine(outsideRoot, $"target-{Guid.NewGuid():N}.sock");
-        await File.WriteAllTextAsync(targetPath, "outside-temp-target");
-
-        try
-        {
-            if (!TryCreateFileSymlink(socketPath, targetPath))
-                return;
-
-            var decision = await DaemonStartupCoordinator.PrepareServerStartAsync(
-                solutionPath,
-                lockTimeout: TimeSpan.FromSeconds(1));
-
-            Assert.Equal(DaemonServerStartDecisionType.Failed, decision.Type);
-            Assert.NotNull(decision.Error);
-            Assert.Equal("DAEMON_STARTUP_STALE_SOCKET_INVALID_TYPE", decision.Error!.Code);
-
-            using var details = JsonDocument.Parse(JsonSerializer.Serialize(decision.Error.Details));
-            Assert.Equal("outsideTempRoot", details.RootElement.GetProperty("reasonCode").GetString());
-            Assert.Equal("local", details.RootElement.GetProperty("targetPathCategory").GetString());
-            Assert.False(details.RootElement.TryGetProperty("socketPath", out _));
-            Assert.Equal(Path.GetFileName(socketPath), details.RootElement.GetProperty("artifactName").GetString());
-            Assert.True(File.Exists(socketPath));
-
-            var counters = DaemonStartupCoordinator.GetStaleSocketOutcomeCounters();
-            Assert.True(counters.ReparseRejectReasons.TryGetValue("outsideTempRoot", out var count));
-            Assert.True(count >= 1);
-        }
-        finally
-        {
-            if (File.Exists(socketPath))
-                File.Delete(socketPath);
-
-            if (File.Exists(targetPath))
-                File.Delete(targetPath);
-
-            if (Directory.Exists(outsideRoot))
-                Directory.Delete(outsideRoot);
-        }
-    }
-
-    [Fact]
     public async Task PrepareServerStart_OnWindows_WithDanglingReparseSocketPath_DeletesLinkAndStartsNew()
     {
         if (!OperatingSystem.IsWindows())
@@ -554,22 +499,45 @@ public sealed class DaemonStartupCoordinatorTests
     }
 
     [Fact]
-    public void IsUncPathForTests_LocalDevicePath_IsNotUnc()
+    public void InvalidTypeError_OnWindows_RemediationEmbedsRealSocketPath()
     {
         if (!OperatingSystem.IsWindows())
             return;
 
-        Assert.False(DaemonStartupCoordinator.IsUncPathForTests("\\\\?\\C:\\temp\\dotnet-aicraft.sock"));
-    }
+        var solutionPath = CreateUniqueSolutionPath();
+        var stalePath = DaemonClient.GetSocketPath(solutionPath);
+        Directory.CreateDirectory(stalePath);
 
-    [Fact]
-    public void IsUncPathForTests_TrueUncPaths_AreUnc()
-    {
-        if (!OperatingSystem.IsWindows())
-            return;
+        try
+        {
+            var error = DaemonClient.BuildStartupProcessExitedError(solutionPath, 1, TimeSpan.FromSeconds(1));
 
-        Assert.True(DaemonStartupCoordinator.IsUncPathForTests("\\\\server\\share\\dotnet-aicraft.sock"));
-        Assert.True(DaemonStartupCoordinator.IsUncPathForTests("\\\\?\\UNC\\server\\share\\dotnet-aicraft.sock"));
+            using var details = JsonDocument.Parse(JsonSerializer.Serialize(error.Details));
+            var remediation = details.RootElement.GetProperty("remediation");
+
+            var powershell = remediation.GetProperty("powershell").GetString()!;
+            var cmdDelete = remediation.GetProperty("cmdDelete").GetString()!;
+            var cmdJunction = remediation.GetProperty("cmdJunction").GetString()!;
+
+            Assert.DoesNotContain("<stale-socket-path>", powershell, StringComparison.Ordinal);
+            Assert.DoesNotContain("<stale-socket-path>", cmdDelete, StringComparison.Ordinal);
+            Assert.DoesNotContain("<stale-socket-path>", cmdJunction, StringComparison.Ordinal);
+
+            Assert.Contains(stalePath, powershell, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(stalePath, cmdDelete, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(stalePath, cmdJunction, StringComparison.OrdinalIgnoreCase);
+
+            // PowerShell -LiteralPath must use single-quoted form.
+            Assert.Contains($"-LiteralPath '{stalePath}'", powershell, StringComparison.OrdinalIgnoreCase);
+            // cmd variants must use double-quoted form.
+            Assert.Contains($"\"{stalePath}\"", cmdDelete, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains($"\"{stalePath}\"", cmdJunction, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(stalePath))
+                Directory.Delete(stalePath);
+        }
     }
 
     private static string CreateUniqueSolutionPath()

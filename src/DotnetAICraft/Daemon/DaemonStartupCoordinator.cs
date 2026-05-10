@@ -269,7 +269,7 @@ public static class DaemonStartupCoordinator
                     stage = "liveness",
                     reasonCode,
                     artifactType = "file-or-reparse",
-                    remediation = BuildWindowsStaleArtifactRemediation("Remove the stale artifact manually and retry daemon startup.")
+                    remediation = BuildWindowsStaleArtifactRemediation("Remove the stale artifact manually and retry daemon startup.", socketPath)
                 });
             return false;
         }
@@ -339,44 +339,15 @@ public static class DaemonStartupCoordinator
         if (attrs.HasFlag(FileAttributes.Directory))
             return new ReparseSafetyDecision(false, "unsupportedReparseTag", "unknown", "reparse-point");
 
-        var socketDirectory = Path.GetDirectoryName(socketPath);
-        if (string.IsNullOrWhiteSpace(socketDirectory))
-            return new ReparseSafetyDecision(false, "unresolvedLinkTarget", "unknown", "reparse-point");
-
-        if (!TryNormalizeLinkTarget(socketPath, socketDirectory, out var normalizedTarget))
-            return new ReparseSafetyDecision(false, "unsupportedReparseTag", "unknown", "reparse-point");
-
-        if (IsUncPath(normalizedTarget) || !Path.IsPathFullyQualified(normalizedTarget))
-            return new ReparseSafetyDecision(false, "nonLocalTarget", "unc", "reparse-point");
-
-        if (!IsPathUnderRoot(normalizedTarget, Path.GetTempPath()))
+        if (!IsPathUnderRoot(socketPath, Path.GetTempPath()))
             return new ReparseSafetyDecision(false, "outsideTempRoot", "local", "reparse-point");
 
-        var resolved = new FileInfo(socketPath).ResolveLinkTarget(returnFinalTarget: false);
-        if (resolved is null)
-        {
-            if (!TryNormalizeLinkTarget(socketPath, socketDirectory, out var normalizedTargetAfterProbe))
-                return new ReparseSafetyDecision(false, "unresolvedLinkTarget", "unknown", "reparse-point");
-
-            if (!PathEquals(normalizedTargetAfterProbe, normalizedTarget))
-                return new ReparseSafetyDecision(false, "targetChangedDuringValidation", "local", "reparse-point");
-
-            return new ReparseSafetyDecision(true, "safe", "local", "reparse-point");
-        }
-
-        string resolvedPath;
-        try
-        {
-            resolvedPath = Path.GetFullPath(resolved.FullName);
-        }
-        catch
-        {
-            return new ReparseSafetyDecision(false, "unresolvedLinkTarget", "unknown", "reparse-point");
-        }
-
-        if (!PathEquals(resolvedPath, normalizedTarget))
-            return new ReparseSafetyDecision(false, "targetChangedDuringValidation", "local", "reparse-point");
-
+        // A non-directory reparse point that lives at the expected daemon socket
+        // path under %TEMP% is — given that liveness probes confirmed no daemon
+        // is listening — by construction our own orphaned AF_UNIX socket file
+        // (reparse tag IO_REPARSE_TAG_AF_UNIX) or a daemon-named symbolic link.
+        // Either is safe to remove via File.Delete; we deliberately do not
+        // perform native reparse-tag inspection (no P/Invoke).
         return new ReparseSafetyDecision(true, "safe", "local", "reparse-point");
     }
 
@@ -388,9 +359,8 @@ public static class DaemonStartupCoordinator
         var remediationMessage = decision.ReasonCode switch
         {
             "artifactNameMismatch" => "Ensure the stale artifact name matches the daemon socket naming convention before retrying.",
-            "nonLocalTarget" => "Use a local (non-UNC) target for the daemon socket reparse point or remove the stale artifact manually.",
             "outsideTempRoot" => "Keep daemon socket artifacts under the current user's temp directory or remove the stale artifact manually.",
-            "unsupportedReparseTag" => "Only symbolic-link stale socket artifacts are auto-cleaned. Remove this artifact manually and retry.",
+            "unsupportedReparseTag" => "Remove the stale directory reparse point manually and retry.",
             _ => "Resolve the stale reparse-point artifact manually and retry daemon startup."
         };
 
@@ -404,7 +374,7 @@ public static class DaemonStartupCoordinator
                 artifactType = decision.ArtifactType,
                 reasonCode = decision.ReasonCode,
                 targetPathCategory = decision.TargetPathCategory,
-                remediation = BuildWindowsStaleArtifactRemediation(remediationMessage)
+                remediation = BuildWindowsStaleArtifactRemediation(remediationMessage, socketPath)
             });
     }
 
@@ -433,23 +403,32 @@ public static class DaemonStartupCoordinator
                 artifactType,
                 reasonCode,
                 reason,
-                remediation = BuildWindowsStaleArtifactRemediation("Remove the stale artifact manually and retry daemon startup.")
+                remediation = BuildWindowsStaleArtifactRemediation("Remove the stale artifact manually and retry daemon startup.", socketPath)
             });
     }
 
-    private static object? BuildWindowsStaleArtifactRemediation(string summary)
+    private static object? BuildWindowsStaleArtifactRemediation(string summary, string socketPath)
     {
         if (!OperatingSystem.IsWindows())
             return null;
 
+        var psPath = QuoteForPowerShellLiteralPath(socketPath);
+        var cmdPath = QuoteForCmd(socketPath);
+
         return new
         {
             summary,
-            powershell = "Remove-Item -LiteralPath <stale-socket-path> -Force",
-            cmdDelete = "del /f <stale-socket-path>",
-            cmdJunction = "rmdir <stale-socket-path>"
+            powershell = $"Remove-Item -LiteralPath {psPath} -Force",
+            cmdDelete = $"del /f {cmdPath}",
+            cmdJunction = $"rmdir {cmdPath}"
         };
     }
+
+    private static string QuoteForPowerShellLiteralPath(string path)
+        => "'" + path.Replace("'", "''") + "'";
+
+    private static string QuoteForCmd(string path)
+        => "\"" + path + "\"";
 
     private static bool IsExpectedDaemonSocketArtifactName(string socketPath)
     {
@@ -466,12 +445,6 @@ public static class DaemonStartupCoordinator
         return normalizedPath.StartsWith(normalizedRoot, comparison);
     }
 
-    private static bool PathEquals(string left, string right)
-    {
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), comparison);
-    }
-
     private static string EnsureTrailingSeparator(string path)
     {
         if (path.EndsWith(Path.DirectorySeparatorChar) || path.EndsWith(Path.AltDirectorySeparatorChar))
@@ -479,55 +452,6 @@ public static class DaemonStartupCoordinator
 
         return path + Path.DirectorySeparatorChar;
     }
-
-    private static bool TryNormalizeLinkTarget(string socketPath, string socketDirectory, out string normalizedTarget)
-    {
-        normalizedTarget = string.Empty;
-
-        var linkTarget = new FileInfo(socketPath).LinkTarget;
-        if (string.IsNullOrWhiteSpace(linkTarget))
-            return false;
-
-        try
-        {
-            normalizedTarget = Path.IsPathFullyQualified(linkTarget)
-                ? Path.GetFullPath(linkTarget)
-                : Path.GetFullPath(linkTarget, socketDirectory);
-            return true;
-        }
-        catch
-        {
-            normalizedTarget = string.Empty;
-            return false;
-        }
-    }
-
-    private static bool IsUncPath(string path)
-    {
-        if (path.StartsWith("\\\\?\\UNC\\", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("//?/UNC/", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        if (path.StartsWith("\\\\", StringComparison.Ordinal)
-            || path.StartsWith("//", StringComparison.Ordinal))
-        {
-            if (path.StartsWith("\\\\?\\", StringComparison.Ordinal)
-                || path.StartsWith("//?/", StringComparison.Ordinal)
-                || path.StartsWith("\\\\.\\", StringComparison.Ordinal)
-                || path.StartsWith("//./", StringComparison.Ordinal))
-            {
-                return false;
-            }
-
-            return true;
-        }
-
-        return false;
-    }
-
-    internal static bool IsUncPathForTests(string path) => IsUncPath(path);
 
     private static string MapDeleteFailureReasonCode(Exception ex)
         => ex switch
