@@ -1,4 +1,5 @@
 using DotnetAICraft.Commands.Shared;
+using DotnetAICraft.Diagnostics;
 using DotnetAICraft.Output;
 
 namespace DotnetAICraft.Commands.Symbols;
@@ -15,6 +16,8 @@ internal static class Entry
         int offset,
         string? idleTimeout)
     {
+        DebugLog.Write("symbols", $"ExecuteAsync begin solution={solutionPath} pattern={pattern} kind={kind} limit={limit} offset={offset}");
+
         if (!Validation.TryNormalizeKind(kind, out var normalizedKind, out var kindError))
         {
             JsonOutput.WriteError(kindError!.Code, kindError.Message, kindError.Details);
@@ -47,7 +50,9 @@ internal static class Entry
             if (CommandHelpers.TryHandleError(res))
                 return;
 
+            DebugLog.Write("symbols", "ExecuteAsync writing output to stdout");
             JsonOutput.Write(CommandHelpers.GetDataOrNull(res));
+            DebugLog.Write("symbols", "ExecuteAsync finished");
         }
     }
 }

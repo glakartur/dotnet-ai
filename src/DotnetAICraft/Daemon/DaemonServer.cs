@@ -1,5 +1,6 @@
 ﻿using System.Net.Sockets;
 using System.Text;
+using DotnetAICraft.Diagnostics;
 using DotnetAICraft.Models;
 using DotnetAICraft.Output;
 using DotnetAICraft.Roslyn;
@@ -180,6 +181,8 @@ public sealed class DaemonServer : IAsyncDisposable
             var request = JsonOutput.Deserialize<DaemonRequest>(line)
                 ?? throw new InvalidOperationException("Invalid request JSON.");
 
+            DebugLog.Write("server", $"HandleClientAsync request received command={request.Command} id={request.Id}");
+
             if (!CanAcceptRequests() && request.Command != "shutdown")
             {
                 var unavailable = CreateErrorResponse(
@@ -195,7 +198,9 @@ public sealed class DaemonServer : IAsyncDisposable
             requestStarted = true;
             command = request.Command;
             var response = await DispatchAsync(request, ct);
+            DebugLog.Write("server", $"HandleClientAsync response ready command={request.Command} id={request.Id}");
             await writer.WriteLineAsync(JsonOutput.Serialize(response).AsMemory(), ct);
+            DebugLog.Write("server", $"HandleClientAsync response written command={request.Command} id={request.Id}");
         }
         catch (Exception ex)
         {
@@ -219,6 +224,7 @@ public sealed class DaemonServer : IAsyncDisposable
 
     private async Task<DaemonResponse> DispatchAsync(DaemonRequest req, CancellationToken ct)
     {
+        DebugLog.Write("server", $"DispatchAsync begin command={req.Command} id={req.Id}");
         var sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
@@ -265,6 +271,10 @@ public sealed class DaemonServer : IAsyncDisposable
                 req.Id,
                 new ErrorInfo("INTERNAL_ERROR", "Unexpected daemon error.", new { hint = "Check daemon logs for details." }),
                 new ResponseMeta(sw.ElapsedMilliseconds, _loadedAt));
+        }
+        finally
+        {
+            DebugLog.Write("server", $"DispatchAsync end command={req.Command} id={req.Id} durationMs={sw.ElapsedMilliseconds}");
         }
     }
 

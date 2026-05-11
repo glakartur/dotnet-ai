@@ -5,7 +5,10 @@ namespace DotnetAICraft.Commands;
 
 public static class RefsCommand
 {
-    public static Command Build(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
+    public static Command Build(
+        Option<FileInfo> solutionOption,
+        Option<string?> idleTimeoutOption,
+        Option<bool>? debugOption = null)
     {
         var fileOpt   = new Option<FileInfo?>("--file") { Description = "Source file containing the symbol" };
         var lineOpt   = new Option<int?>("--line") { Description = "1-based line number" };
@@ -16,6 +19,9 @@ public static class RefsCommand
         {
             solutionOption, fileOpt, lineOpt, colOpt, symbolOpt, idleTimeoutOption
         };
+
+        if (debugOption is not null)
+            cmd.Add(debugOption);
 
         cmd.SetAction(async parseResult =>
         {

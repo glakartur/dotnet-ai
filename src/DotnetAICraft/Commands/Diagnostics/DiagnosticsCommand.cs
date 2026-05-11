@@ -8,7 +8,10 @@ public static class DiagnosticsCommand
 {
     private const string AcceptedSeverities = "all | error | warning | info | hidden";
 
-    public static Command Build(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
+    public static Command Build(
+        Option<FileInfo> solutionOption,
+        Option<string?> idleTimeoutOption,
+        Option<bool>? debugOption = null)
     {
         var severityOpt = new Option<string>("--severity")
         {
@@ -30,6 +33,9 @@ public static class DiagnosticsCommand
         {
             solutionOption, severityOpt, projectOpt, fileOpt, idleTimeoutOption
         };
+
+        if (debugOption is not null)
+            cmd.Add(debugOption);
 
         cmd.SetAction(async parseResult =>
         {

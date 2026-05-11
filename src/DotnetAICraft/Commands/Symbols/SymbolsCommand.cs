@@ -6,7 +6,10 @@ namespace DotnetAICraft.Commands;
 
 public static class SymbolsCommand
 {
-    public static Command Build(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
+    public static Command Build(
+        Option<FileInfo> solutionOption,
+        Option<string?> idleTimeoutOption,
+        Option<bool>? debugOption = null)
     {
         var patternOpt = new Option<string>("--pattern")
         {
@@ -36,6 +39,9 @@ public static class SymbolsCommand
         {
             solutionOption, patternOpt, kindOpt, limitOpt, offsetOpt, idleTimeoutOption
         };
+
+        if (debugOption is not null)
+            cmd.Add(debugOption);
 
         cmd.SetAction(async parseResult =>
         {

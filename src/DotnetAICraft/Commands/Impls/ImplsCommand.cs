@@ -5,7 +5,10 @@ namespace DotnetAICraft.Commands;
 
 public static class ImplsCommand
 {
-    public static Command Build(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
+    public static Command Build(
+        Option<FileInfo> solutionOption,
+        Option<string?> idleTimeoutOption,
+        Option<bool>? debugOption = null)
     {
         var symbolOpt = new Option<string>("--symbol")
         {
@@ -18,6 +21,9 @@ public static class ImplsCommand
         {
             solutionOption, symbolOpt, idleTimeoutOption
         };
+
+        if (debugOption is not null)
+            cmd.Add(debugOption);
 
         cmd.SetAction(async parseResult =>
         {

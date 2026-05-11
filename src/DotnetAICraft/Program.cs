@@ -1,5 +1,6 @@
 ﻿using System.CommandLine;
 using DotnetAICraft.Commands;
+using DotnetAICraft.Diagnostics;
 using Microsoft.Build.Locator;
 
 // MSBuild MUST be registered before any Roslyn/MSBuild types are loaded.
@@ -30,19 +31,27 @@ var idleTimeoutOption = new Option<string?>("--idle-timeout")
     Description = "Daemon idle timeout for this session: 'off' or a positive duration (m|h)"
 };
 
+var debugOption = new Option<bool>("--debug")
+{
+    Description = "Enable verbose debug logging to stderr"
+};
+
 // ── Root command ──────────────────────────────────────────────────────────────
 
 var root = new RootCommand(
     "dotnet-aicraft — semantic .NET code analysis for AI agents, powered by Roslyn");
 
-root.Add(ServerCommand.Build(solutionOption, idleTimeoutOption));
-root.Add(RefsCommand.Build(solutionOption, idleTimeoutOption));
-root.Add(DefinitionCommand.Build(solutionOption, idleTimeoutOption));
-root.Add(RenameCommand.Build(solutionOption, idleTimeoutOption));
-root.Add(ImplsCommand.Build(solutionOption, idleTimeoutOption));
-root.Add(CallersCommand.Build(solutionOption, idleTimeoutOption));
-root.Add(DiagnosticsCommand.Build(solutionOption, idleTimeoutOption));
-root.Add(SymbolsCommand.Build(solutionOption, idleTimeoutOption));
-root.Add(UnusedCommand.Build(solutionOption, idleTimeoutOption));
+DebugLog.ConfigureFromEnvironment();
+DebugLog.ConfigureFromArgs(args);
+
+root.Add(ServerCommand.Build(solutionOption, idleTimeoutOption, debugOption));
+root.Add(RefsCommand.Build(solutionOption, idleTimeoutOption, debugOption));
+root.Add(DefinitionCommand.Build(solutionOption, idleTimeoutOption, debugOption));
+root.Add(RenameCommand.Build(solutionOption, idleTimeoutOption, debugOption));
+root.Add(ImplsCommand.Build(solutionOption, idleTimeoutOption, debugOption));
+root.Add(CallersCommand.Build(solutionOption, idleTimeoutOption, debugOption));
+root.Add(DiagnosticsCommand.Build(solutionOption, idleTimeoutOption, debugOption));
+root.Add(SymbolsCommand.Build(solutionOption, idleTimeoutOption, debugOption));
+root.Add(UnusedCommand.Build(solutionOption, idleTimeoutOption, debugOption));
 
 return await root.Parse(args).InvokeAsync();

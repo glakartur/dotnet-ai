@@ -6,23 +6,31 @@ namespace DotnetAICraft.Commands;
 
 public static class ServerCommand
 {
-    public static Command Build(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
+    public static Command Build(
+        Option<FileInfo> solutionOption,
+        Option<string?> idleTimeoutOption,
+        Option<bool>? debugOption = null)
     {
         var cmd = new Command("server", "Manage the analysis daemon");
 
-        cmd.Add(BuildStart(solutionOption, idleTimeoutOption));
-        cmd.Add(BuildStop(solutionOption));
-        cmd.Add(BuildStatus(solutionOption));
-        cmd.Add(BuildReload(solutionOption, idleTimeoutOption));
+        cmd.Add(BuildStart(solutionOption, idleTimeoutOption, debugOption));
+        cmd.Add(BuildStop(solutionOption, debugOption));
+        cmd.Add(BuildStatus(solutionOption, debugOption));
+        cmd.Add(BuildReload(solutionOption, idleTimeoutOption, debugOption));
 
         return cmd;
     }
 
-    private static Command BuildStart(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
+    private static Command BuildStart(
+        Option<FileInfo> solutionOption,
+        Option<string?> idleTimeoutOption,
+        Option<bool>? debugOption)
     {
         var cmd = new Command("start", "Start the daemon (usually called automatically)");
         cmd.Add(solutionOption);
         cmd.Add(idleTimeoutOption);
+        if (debugOption is not null)
+            cmd.Add(debugOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -34,10 +42,12 @@ public static class ServerCommand
         return cmd;
     }
 
-    private static Command BuildStop(Option<FileInfo> solutionOption)
+    private static Command BuildStop(Option<FileInfo> solutionOption, Option<bool>? debugOption)
     {
         var cmd = new Command("stop", "Stop the running daemon for this solution");
         cmd.Add(solutionOption);
+        if (debugOption is not null)
+            cmd.Add(debugOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -48,10 +58,12 @@ public static class ServerCommand
         return cmd;
     }
 
-    private static Command BuildStatus(Option<FileInfo> solutionOption)
+    private static Command BuildStatus(Option<FileInfo> solutionOption, Option<bool>? debugOption)
     {
         var cmd = new Command("status", "Show daemon status");
         cmd.Add(solutionOption);
+        if (debugOption is not null)
+            cmd.Add(debugOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -62,11 +74,16 @@ public static class ServerCommand
         return cmd;
     }
 
-    private static Command BuildReload(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
+    private static Command BuildReload(
+        Option<FileInfo> solutionOption,
+        Option<string?> idleTimeoutOption,
+        Option<bool>? debugOption)
     {
         var cmd = new Command("reload", "Reload the solution (e.g. after adding/removing projects)");
         cmd.Add(solutionOption);
         cmd.Add(idleTimeoutOption);
+        if (debugOption is not null)
+            cmd.Add(debugOption);
 
         cmd.SetAction(async parseResult =>
         {

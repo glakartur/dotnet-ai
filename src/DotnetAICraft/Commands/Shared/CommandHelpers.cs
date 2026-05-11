@@ -1,4 +1,5 @@
 using DotnetAICraft.Daemon;
+using DotnetAICraft.Diagnostics;
 using DotnetAICraft.Models;
 using DotnetAICraft.Output;
 
@@ -10,12 +11,16 @@ internal static class CommandHelpers
         string solutionPath,
         string? idleTimeout)
     {
+        DebugLog.Write("client", $"ConnectOrWriteValidationErrorAsync begin solution={solutionPath} idleTimeout={idleTimeout ?? "<null>"}");
         try
         {
-            return await DaemonClient.ConnectOrStartAsync(solutionPath, idleTimeout: idleTimeout);
+            var client = await DaemonClient.ConnectOrStartAsync(solutionPath, idleTimeout: idleTimeout);
+            DebugLog.Write("client", "ConnectOrWriteValidationErrorAsync connected");
+            return client;
         }
         catch (DaemonClientValidationException ex)
         {
+            DebugLog.Write("client", $"ConnectOrWriteValidationErrorAsync validation error code={ex.Error.Code}");
             JsonOutput.WriteError(ex.Error.Code, ex.Error.Message, ex.Error.Details);
             return null;
         }
@@ -33,12 +38,16 @@ internal static class CommandHelpers
     internal static async Task<DaemonResponse?> SendOrWriteValidationErrorAsync(
         Func<Task<DaemonResponse>> send)
     {
+        DebugLog.Write("client", "SendOrWriteValidationErrorAsync begin");
         try
         {
-            return await send();
+            var response = await send();
+            DebugLog.Write("client", "SendOrWriteValidationErrorAsync response received");
+            return response;
         }
         catch (DaemonClientValidationException ex)
         {
+            DebugLog.Write("client", $"SendOrWriteValidationErrorAsync validation error code={ex.Error.Code}");
             JsonOutput.WriteError(ex.Error.Code, ex.Error.Message, ex.Error.Details);
             return null;
         }

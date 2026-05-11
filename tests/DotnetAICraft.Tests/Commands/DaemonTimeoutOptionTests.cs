@@ -14,34 +14,49 @@ public class DaemonTimeoutOptionTests
     private static readonly SemaphoreSlim ConsoleCaptureLock = new(1, 1);
 
     [Fact]
-    public void DaemonBackedCommands_ExposeIdleTimeoutOption()
+    public void DaemonBackedCommands_ExposeIdleTimeoutAndDebugOptions()
     {
         var solutionOption = BuildSolutionOption();
         var idleTimeoutOption = BuildIdleTimeoutOption();
+        var debugOption = BuildDebugOption();
 
-        var refs = RefsCommand.Build(solutionOption, idleTimeoutOption);
-        var definition = DefinitionCommand.Build(solutionOption, idleTimeoutOption);
-        var rename = RenameCommand.Build(solutionOption, idleTimeoutOption);
-        var impls = ImplsCommand.Build(solutionOption, idleTimeoutOption);
-        var callers = CallersCommand.Build(solutionOption, idleTimeoutOption);
-        var symbols = SymbolsCommand.Build(solutionOption, idleTimeoutOption);
-        var unused = UnusedCommand.Build(solutionOption, idleTimeoutOption);
-        var diagnostics = DiagnosticsCommand.Build(solutionOption, idleTimeoutOption);
-        var server = ServerCommand.Build(solutionOption, idleTimeoutOption);
+        var refs = RefsCommand.Build(solutionOption, idleTimeoutOption, debugOption);
+        var definition = DefinitionCommand.Build(solutionOption, idleTimeoutOption, debugOption);
+        var rename = RenameCommand.Build(solutionOption, idleTimeoutOption, debugOption);
+        var impls = ImplsCommand.Build(solutionOption, idleTimeoutOption, debugOption);
+        var callers = CallersCommand.Build(solutionOption, idleTimeoutOption, debugOption);
+        var symbols = SymbolsCommand.Build(solutionOption, idleTimeoutOption, debugOption);
+        var unused = UnusedCommand.Build(solutionOption, idleTimeoutOption, debugOption);
+        var diagnostics = DiagnosticsCommand.Build(solutionOption, idleTimeoutOption, debugOption);
+        var server = ServerCommand.Build(solutionOption, idleTimeoutOption, debugOption);
 
         AssertContainsOption(refs, "--idle-timeout");
+        AssertContainsOption(refs, "--debug");
         AssertContainsOption(definition, "--idle-timeout");
+        AssertContainsOption(definition, "--debug");
         AssertContainsOption(rename, "--idle-timeout");
+        AssertContainsOption(rename, "--debug");
         AssertContainsOption(impls, "--idle-timeout");
+        AssertContainsOption(impls, "--debug");
         AssertContainsOption(callers, "--idle-timeout");
+        AssertContainsOption(callers, "--debug");
         AssertContainsOption(symbols, "--idle-timeout");
+        AssertContainsOption(symbols, "--debug");
         AssertContainsOption(unused, "--idle-timeout");
+        AssertContainsOption(unused, "--debug");
         AssertContainsOption(diagnostics, "--idle-timeout");
+        AssertContainsOption(diagnostics, "--debug");
 
         var start = server.Subcommands.Single(c => c.Name == "start");
+        var stop = server.Subcommands.Single(c => c.Name == "stop");
+        var status = server.Subcommands.Single(c => c.Name == "status");
         var reload = server.Subcommands.Single(c => c.Name == "reload");
         AssertContainsOption(start, "--idle-timeout");
+        AssertContainsOption(start, "--debug");
+        AssertContainsOption(stop, "--debug");
+        AssertContainsOption(status, "--debug");
         AssertContainsOption(reload, "--idle-timeout");
+        AssertContainsOption(reload, "--debug");
     }
 
     [Fact]
@@ -217,6 +232,9 @@ public class DaemonTimeoutOptionTests
 
     private static Option<string?> BuildIdleTimeoutOption()
         => new("--idle-timeout");
+
+    private static Option<bool> BuildDebugOption()
+        => new("--debug");
 
     private static void AssertContainsOption(Command command, string alias)
         => Assert.Contains(command.Options, opt =>

@@ -6,7 +6,10 @@ namespace DotnetAICraft.Commands;
 
 public static class UnusedCommand
 {
-    public static Command Build(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
+    public static Command Build(
+        Option<FileInfo> solutionOption,
+        Option<string?> idleTimeoutOption,
+        Option<bool>? debugOption = null)
     {
         var kindOpt = new Option<string>("--kind")
         {
@@ -38,6 +41,9 @@ public static class UnusedCommand
             includeGeneratedOpt,
             idleTimeoutOption
         };
+
+        if (debugOption is not null)
+            cmd.Add(debugOption);
 
         cmd.SetAction(async parseResult =>
         {

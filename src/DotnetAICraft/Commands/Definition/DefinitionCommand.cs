@@ -5,7 +5,10 @@ namespace DotnetAICraft.Commands;
 
 public static class DefinitionCommand
 {
-    public static Command Build(Option<FileInfo> solutionOption, Option<string?> idleTimeoutOption)
+    public static Command Build(
+        Option<FileInfo> solutionOption,
+        Option<string?> idleTimeoutOption,
+        Option<bool>? debugOption = null)
     {
         var fileOpt = new Option<FileInfo?>("--file")
         {
@@ -36,6 +39,9 @@ public static class DefinitionCommand
             symbolOpt,
             idleTimeoutOption
         };
+
+        if (debugOption is not null)
+            cmd.Add(debugOption);
 
         cmd.SetAction(async parseResult =>
         {

@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using DotnetAICraft.Diagnostics;
 using DotnetAICraft.Models;
 using DotnetAICraft.Output;
 
@@ -29,6 +30,7 @@ public sealed class DaemonClient : IAsyncDisposable
     public static async Task<DaemonClient?> TryConnectAsync(string solutionPath)
     {
         var socketPath = GetSocketPath(solutionPath);
+        DebugLog.Write("client", $"TryConnectAsync socketPath={socketPath}");
 
         if (!File.Exists(socketPath)) return null;
 
@@ -36,10 +38,12 @@ public sealed class DaemonClient : IAsyncDisposable
         try
         {
             await socket.ConnectAsync(new UnixDomainSocketEndPoint(socketPath));
+            DebugLog.Write("client", "TryConnectAsync connected to existing daemon");
             return new DaemonClient(socket);
         }
         catch
         {
+            DebugLog.Write("client", "TryConnectAsync failed to connect");
             socket.Dispose();
             return null;
         }
@@ -54,10 +58,13 @@ public sealed class DaemonClient : IAsyncDisposable
             throw new DaemonClientValidationException(parseError!);
 
         var timeout = startTimeout ?? TimeSpan.FromSeconds(120);
+        DebugLog.Write("client", $"ConnectOrStartAsync begin timeoutMs={(long)timeout.TotalMilliseconds}");
         var outcome = await DaemonStartupCoordinator.ConnectOrStartAsync(
             solutionPath,
             parsedTimeout,
             readyTimeout: timeout);
+
+        DebugLog.Write("client", $"ConnectOrStartAsync outcome={outcome.Type} stage={outcome.Stage}");
 
         if (outcome.Type == DaemonStartupOutcomeType.Failed)
             throw new DaemonClientValidationException(outcome.Error ?? new ErrorInfo("DAEMON_STARTUP_FAILED", "Daemon startup failed."));
@@ -98,6 +105,9 @@ public sealed class DaemonClient : IAsyncDisposable
             }
         };
 
+        if (DebugLog.IsEnabled)
+            proc.StartInfo.EnvironmentVariables["DOTNET_AICRAFT_DEBUG"] = "1";
+
         foreach (var arg in args)
             proc.StartInfo.ArgumentList.Add(arg);
 
@@ -110,18 +120,27 @@ public sealed class DaemonClient : IAsyncDisposable
     {
         var deadline = DateTime.UtcNow + timeout;
         var delay    = 200;
+        var attempts = 0;
 
         while (DateTime.UtcNow < deadline)
         {
             await Task.Delay(delay);
+            attempts++;
+            DebugLog.Write("client", $"WaitForDaemonAsync attempt={attempts} delayMs={delay}");
             delay = Math.Min(delay * 2, 2000); // exponential backoff up to 2s
 
             var client = await TryConnectAsync(solutionPath);
             if (client is not null)
+            {
+                DebugLog.Write("client", $"WaitForDaemonAsync connected attempt={attempts}");
                 return (client, null);
+            }
 
             if (startupProcess is not null && startupProcess.HasExited)
+            {
+                DebugLog.Write("client", $"WaitForDaemonAsync startup process exited code={startupProcess.ExitCode}");
                 return (null, startupProcess.ExitCode);
+            }
         }
 
         if (startupProcess is not null && startupProcess.HasExited)
@@ -153,6 +172,7 @@ public sealed class DaemonClient : IAsyncDisposable
 
     public async Task<DaemonResponse> SendAsync(string command, object? @params = null)
     {
+        DebugLog.Write("client", $"SendAsync begin command={command}");
         var request = new DaemonRequest(
             Id:      Guid.NewGuid().ToString("N"),
             Command: command,
@@ -160,8 +180,10 @@ public sealed class DaemonClient : IAsyncDisposable
 
         await _writer.WriteLineAsync(JsonOutput.Serialize(request));
         await _writer.FlushAsync();
+        DebugLog.Write("client", $"SendAsync request sent command={command} requestId={request.Id}");
 
         var line = await ReadResponseLineOrThrowAsync(_reader, command, DefaultResponseTimeout);
+        DebugLog.Write("client", $"SendAsync response line received command={command} length={line.Length}");
         return ParseResponseOrThrow(line, command);
     }
 
@@ -174,10 +196,12 @@ public sealed class DaemonClient : IAsyncDisposable
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var readTask = reader.ReadLineAsync(timeoutCts.Token).AsTask();
         var timeoutTask = Task.Delay(timeout, cancellationToken);
+        DebugLog.Write("client", $"ReadResponseLineOrThrowAsync wait command={command} timeoutMs={(long)timeout.TotalMilliseconds}");
 
         var completed = await Task.WhenAny(readTask, timeoutTask);
         if (completed == timeoutTask)
         {
+            DebugLog.Write("client", $"ReadResponseLineOrThrowAsync timeout command={command}");
             timeoutCts.Cancel();
             throw new DaemonClientValidationException(
                 new ErrorInfo(
@@ -197,6 +221,7 @@ public sealed class DaemonClient : IAsyncDisposable
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
+            DebugLog.Write("client", $"ReadResponseLineOrThrowAsync canceled by timeout command={command}");
             throw new DaemonClientValidationException(
                 new ErrorInfo(
                     "DAEMON_RESPONSE_TIMEOUT",
@@ -210,6 +235,7 @@ public sealed class DaemonClient : IAsyncDisposable
 
         if (line is null)
         {
+            DebugLog.Write("client", $"ReadResponseLineOrThrowAsync incomplete response command={command}");
             throw new DaemonClientValidationException(
                 new ErrorInfo(
                     "DAEMON_RESPONSE_INCOMPLETE",
@@ -234,6 +260,7 @@ public sealed class DaemonClient : IAsyncDisposable
 
         if (response is null)
         {
+            DebugLog.Write("client", $"ParseResponseOrThrow invalid JSON command={command}");
             throw new DaemonClientValidationException(
                 new ErrorInfo(
                     "DAEMON_RESPONSE_INVALID_JSON",
@@ -241,6 +268,7 @@ public sealed class DaemonClient : IAsyncDisposable
                     new { command }));
         }
 
+        DebugLog.Write("client", $"ParseResponseOrThrow parsed command={command} hasError={response.Error is not null}");
         return response;
     }
 
