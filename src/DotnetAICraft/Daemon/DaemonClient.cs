@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using DotnetAICraft.Models;
 using DotnetAICraft.Output;
 
@@ -9,6 +10,8 @@ namespace DotnetAICraft.Daemon;
 
 public sealed class DaemonClient : IAsyncDisposable
 {
+    internal static readonly TimeSpan DefaultResponseTimeout = TimeSpan.FromSeconds(120);
+
     private readonly Socket _socket;
     private readonly StreamReader _reader;
     private readonly StreamWriter _writer;
@@ -158,11 +161,87 @@ public sealed class DaemonClient : IAsyncDisposable
         await _writer.WriteLineAsync(JsonOutput.Serialize(request));
         await _writer.FlushAsync();
 
-        var line = await _reader.ReadLineAsync()
-            ?? throw new IOException("Daemon closed the connection unexpectedly.");
+        var line = await ReadResponseLineOrThrowAsync(_reader, command, DefaultResponseTimeout);
+        return ParseResponseOrThrow(line, command);
+    }
 
-        return JsonOutput.Deserialize<DaemonResponse>(line)
-            ?? throw new InvalidOperationException("Daemon returned invalid JSON.");
+    internal static async Task<string> ReadResponseLineOrThrowAsync(
+        TextReader reader,
+        string command,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var readTask = reader.ReadLineAsync(timeoutCts.Token).AsTask();
+        var timeoutTask = Task.Delay(timeout, cancellationToken);
+
+        var completed = await Task.WhenAny(readTask, timeoutTask);
+        if (completed == timeoutTask)
+        {
+            timeoutCts.Cancel();
+            throw new DaemonClientValidationException(
+                new ErrorInfo(
+                    "DAEMON_RESPONSE_TIMEOUT",
+                    "Timed out waiting for daemon response.",
+                    new
+                    {
+                        command,
+                        timeoutMs = (long)timeout.TotalMilliseconds
+                    }));
+        }
+
+        string? line;
+        try
+        {
+            line = await readTask;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new DaemonClientValidationException(
+                new ErrorInfo(
+                    "DAEMON_RESPONSE_TIMEOUT",
+                    "Timed out waiting for daemon response.",
+                    new
+                    {
+                        command,
+                        timeoutMs = (long)timeout.TotalMilliseconds
+                    }));
+        }
+
+        if (line is null)
+        {
+            throw new DaemonClientValidationException(
+                new ErrorInfo(
+                    "DAEMON_RESPONSE_INCOMPLETE",
+                    "Daemon closed the connection before sending a complete response.",
+                    new { command }));
+        }
+
+        return line;
+    }
+
+    internal static DaemonResponse ParseResponseOrThrow(string line, string command)
+    {
+        DaemonResponse? response;
+        try
+        {
+            response = JsonOutput.Deserialize<DaemonResponse>(line);
+        }
+        catch (JsonException)
+        {
+            response = null;
+        }
+
+        if (response is null)
+        {
+            throw new DaemonClientValidationException(
+                new ErrorInfo(
+                    "DAEMON_RESPONSE_INVALID_JSON",
+                    "Daemon returned invalid JSON response.",
+                    new { command }));
+        }
+
+        return response;
     }
 
     // ── Socket path ───────────────────────────────────────────────────────────

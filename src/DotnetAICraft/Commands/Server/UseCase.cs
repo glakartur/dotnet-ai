@@ -33,7 +33,16 @@ internal static class UseCase
 
         await using (client)
         {
-            var res = await client.SendAsync("shutdown");
+            DaemonResponse res;
+            try
+            {
+                res = await client.SendAsync("shutdown");
+            }
+            catch (DaemonClientValidationException ex)
+            {
+                return (null, ex.Error);
+            }
+
             return res.Error is null ? (res.Data, null) : (null, res.Error);
         }
     }
@@ -46,7 +55,16 @@ internal static class UseCase
 
         await using (client)
         {
-            var res = await client.SendAsync("status");
+            DaemonResponse res;
+            try
+            {
+                res = await client.SendAsync("status");
+            }
+            catch (DaemonClientValidationException ex)
+            {
+                return new { error = ex.Error };
+            }
+
             return res.Error is null
                 ? res.Data!
                 : new { error = res.Error };
@@ -61,7 +79,16 @@ internal static class UseCase
 
         await using (client)
         {
-            var res = await client.SendAsync("reload");
+            DaemonResponse res;
+            try
+            {
+                res = await client.SendAsync("reload");
+            }
+            catch (DaemonClientValidationException ex)
+            {
+                return (null, ex.Error);
+            }
+
             return res.Error is null ? (res.Data, null) : (null, res.Error);
         }
     }

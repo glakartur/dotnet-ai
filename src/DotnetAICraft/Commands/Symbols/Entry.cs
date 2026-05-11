@@ -33,13 +33,16 @@ internal static class Entry
 
         await using (client)
         {
-            var res = await client.SendAsync(CommandName, new
+            var res = await CommandHelpers.SendOrWriteValidationErrorAsync(client, CommandName, new
             {
                 pattern,
                 kind = normalizedKind,
                 limit = normalizedLimit,
                 offset = normalizedOffset
             });
+
+            if (res is null)
+                return;
 
             if (CommandHelpers.TryHandleError(res))
                 return;

@@ -126,6 +126,44 @@ public class DaemonTimeoutOptionTests
         }
     }
 
+    [Fact]
+    public async Task SendOrWriteValidationErrorAsync_WhenClientValidationFails_WritesStructuredError()
+    {
+        string output;
+
+        await ConsoleCaptureLock.WaitAsync();
+        try
+        {
+            var originalOut = Console.Out;
+            using var writer = new StringWriter();
+            try
+            {
+                Console.SetOut(writer);
+                var response = await CommandHelpers.SendOrWriteValidationErrorAsync(() =>
+                    throw new DaemonClientValidationException(
+                        new DotnetAICraft.Models.ErrorInfo(
+                            "DAEMON_RESPONSE_TIMEOUT",
+                            "Timed out waiting for daemon response.",
+                            new { command = "symbols" })));
+
+                Assert.Null(response);
+                output = writer.ToString();
+            }
+            finally
+            {
+                Console.SetOut(originalOut);
+            }
+        }
+        finally
+        {
+            ConsoleCaptureLock.Release();
+        }
+
+        using var json = JsonDocument.Parse(output);
+        var error = json.RootElement.GetProperty("error");
+        Assert.Equal("DAEMON_RESPONSE_TIMEOUT", error.GetProperty("code").GetString());
+    }
+
     private static void AssertMatchingInvalidTypeError(string json, string expectedStage)
     {
         using var doc = JsonDocument.Parse(json);

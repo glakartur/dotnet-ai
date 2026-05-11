@@ -24,6 +24,26 @@ internal static class CommandHelpers
     public static object? GetDataOrNull(DaemonResponse response)
         => response.Data;
 
+    public static async Task<DaemonResponse?> SendOrWriteValidationErrorAsync(
+        DaemonClient client,
+        string command,
+        object? @params = null)
+        => await SendOrWriteValidationErrorAsync(() => client.SendAsync(command, @params));
+
+    internal static async Task<DaemonResponse?> SendOrWriteValidationErrorAsync(
+        Func<Task<DaemonResponse>> send)
+    {
+        try
+        {
+            return await send();
+        }
+        catch (DaemonClientValidationException ex)
+        {
+            JsonOutput.WriteError(ex.Error.Code, ex.Error.Message, ex.Error.Details);
+            return null;
+        }
+    }
+
     public static bool TryHandleError(DaemonResponse response)
     {
         if (response.Error is null)

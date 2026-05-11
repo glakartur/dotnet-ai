@@ -27,13 +27,16 @@ internal static class Entry
 
         await using (client)
         {
-            var res = await client.SendAsync(CommandName, new
+            var res = await CommandHelpers.SendOrWriteValidationErrorAsync(client, CommandName, new
             {
                 kind = normalizedKind,
                 project,
                 publicOnly,
                 includeGenerated
             });
+
+            if (res is null)
+                return;
 
             if (!CommandHelpers.TryHandleError(res))
                 JsonOutput.Write(CommandHelpers.GetDataOrNull(res));
