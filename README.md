@@ -34,6 +34,20 @@ Requires .NET 9 SDK or later. Works on **Linux, macOS and Windows**.
 
 ## Usage
 
+### Shared options
+
+Every command accepts these shared options:
+
+| Option | Description |
+|---|---|
+| `--solution` / `-s` | Path to `.sln` or `.csproj` file (required) |
+| `--idle-timeout` | Session-scoped daemon idle timeout: `off` or a positive duration like `5m`, `1h` (default 60m) |
+| `--debug` | Enable verbose debug logging to stderr |
+
+Debug logging can also be enabled via the environment variable `DOTNET_AICRAFT_DEBUG=1`.
+
+---
+
 ### Find all references to a symbol
 
 ```bash
@@ -229,7 +243,7 @@ slice-first internal layout:
 
 ```
 src/DotnetAICraft/
-  Slices/
+  Commands/
     <Command>/
       Entry.cs          # CLI-facing orchestration
       Validation.cs     # command-specific input normalization/validation
@@ -297,6 +311,7 @@ $ dotnet aicraft callers --solution App.sln --file Foo.cs --line 10 --col 5
 | `dotnet aicraft server status` | Daemon status |
 | `dotnet aicraft server reload` | Reload solution |
 | `dotnet aicraft server stop` | Stop daemon |
+| `dotnet aicraft server start` | Start daemon with custom idle timeout |
 
 All commands output **JSON to stdout**. Daemon logs go to **stderr** so they
 don't interfere with JSON parsing.

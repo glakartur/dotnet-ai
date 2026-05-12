@@ -99,9 +99,13 @@ public sealed class DaemonClient : IAsyncDisposable
                 FileName        = exe,
                 UseShellExecute = false,
                 CreateNoWindow  = true,
-                // Daemon's stderr goes to a log file so it doesn't pollute CLI output
-                RedirectStandardError  = false,
-                RedirectStandardOutput = false,
+                // Prevent the daemon from inheriting the parent's pipe handles.
+                // Without redirection the daemon holds the parent's stdout/stderr
+                // file descriptors open (including any pipe write-ends), which
+                // keeps downstream pipe readers alive even after the CLI exits.
+                RedirectStandardInput  = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError  = true,
             }
         };
 
@@ -112,6 +116,16 @@ public sealed class DaemonClient : IAsyncDisposable
             proc.StartInfo.ArgumentList.Add(arg);
 
         proc.Start();
+
+        // Daemon does not use stdin; close it immediately.
+        proc.StandardInput.Close();
+
+        // Drain stdout and stderr asynchronously so the OS pipe buffer never
+        // fills and blocks the daemon. Fire-and-forget: the tasks complete
+        // naturally when the daemon exits and closes its pipe ends.
+        _ = proc.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
+        _ = proc.StandardError.BaseStream.CopyToAsync(Stream.Null);
+
         // Keep process handle so callers can detect early startup exit.
         return Task.FromResult(proc);
     }
