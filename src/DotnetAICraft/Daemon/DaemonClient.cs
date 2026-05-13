@@ -92,24 +92,10 @@ public sealed class DaemonClient : IAsyncDisposable
             args.Add(value);
         }
 
-        var proc = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName        = exe,
-                UseShellExecute = false,
-                CreateNoWindow  = true,
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            }
-        };
+        var proc = new Process { StartInfo = CreateDaemonStartInfo(exe, args) };
 
         if (DebugLog.IsEnabled)
             proc.StartInfo.EnvironmentVariables["DOTNET_AICRAFT_DEBUG"] = "1";
-
-        foreach (var arg in args)
-            proc.StartInfo.ArgumentList.Add(arg);
 
         using (StdHandleInheritance.Suppress())
         {
@@ -123,7 +109,25 @@ public sealed class DaemonClient : IAsyncDisposable
         return Task.FromResult(proc);
     }
 
-    private static async Task DrainProcessPipeAsync(StreamReader reader)
+    internal static ProcessStartInfo CreateDaemonStartInfo(string executablePath, IEnumerable<string> args)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = executablePath,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+
+        foreach (var arg in args)
+            startInfo.ArgumentList.Add(arg);
+
+        return startInfo;
+    }
+
+    internal static async Task DrainProcessPipeAsync(StreamReader reader)
     {
         var buffer = new char[1024];
         try
