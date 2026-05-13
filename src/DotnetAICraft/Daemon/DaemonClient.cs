@@ -99,6 +99,9 @@ public sealed class DaemonClient : IAsyncDisposable
                 FileName        = exe,
                 UseShellExecute = false,
                 CreateNoWindow  = true,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
             }
         };
 
@@ -113,7 +116,28 @@ public sealed class DaemonClient : IAsyncDisposable
             proc.Start();
         }
 
+        proc.StandardInput.Close();
+        _ = DrainProcessPipeAsync(proc.StandardOutput);
+        _ = DrainProcessPipeAsync(proc.StandardError);
+
         return Task.FromResult(proc);
+    }
+
+    private static async Task DrainProcessPipeAsync(StreamReader reader)
+    {
+        var buffer = new char[1024];
+        try
+        {
+            while (await reader.ReadAsync(buffer.AsMemory(0, buffer.Length)).ConfigureAwait(false) > 0)
+            {
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
     }
 
     internal static async Task<(DaemonClient? Client, int? ExitCode)> WaitForDaemonAsync(string solutionPath, TimeSpan timeout, Process? startupProcess = null)
