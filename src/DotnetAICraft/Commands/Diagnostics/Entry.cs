@@ -32,7 +32,7 @@ internal static class Entry
                 severity = normalizedSeverity,
                 project,
                 file = file?.FullName
-            });
+            }, idleTimeout);
 
             if (res is null)
                 return;

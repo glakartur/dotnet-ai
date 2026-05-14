@@ -33,7 +33,7 @@ internal static class Entry
                 project,
                 publicOnly,
                 includeGenerated
-            });
+            }, idleTimeout);
 
             if (res is null)
                 return;

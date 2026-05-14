@@ -43,7 +43,9 @@ internal static class UseCase
                 return (null, ex.Error);
             }
 
-            return res.Error is null ? (res.Data, null) : (null, res.Error);
+            return res.Status == DaemonResponseStatus.Ok
+                ? (res.Result, null)
+                : (null, res.Error);
         }
     }
 
@@ -65,8 +67,8 @@ internal static class UseCase
                 return new { error = ex.Error };
             }
 
-            return res.Error is null
-                ? res.Data!
+            return res.Status == DaemonResponseStatus.Ok
+                ? res.Result!
                 : new { error = res.Error };
         }
     }
@@ -82,14 +84,19 @@ internal static class UseCase
             DaemonResponse res;
             try
             {
-                res = await client.SendAsync("reload");
+                if (!DotnetAICraft.Commands.Shared.CommandHelpers.TryParseIdleTimeoutMinutes(idleTimeout, out var idleTimeoutMinutes, out var parseError))
+                    return (null, parseError);
+
+                res = await client.SendAsync("reload", idleTimeoutMinutes: idleTimeoutMinutes);
             }
             catch (DaemonClientValidationException ex)
             {
                 return (null, ex.Error);
             }
 
-            return res.Error is null ? (res.Data, null) : (null, res.Error);
+            return res.Status == DaemonResponseStatus.Ok
+                ? (res.Result, null)
+                : (null, res.Error);
         }
     }
 }

@@ -36,13 +36,16 @@ internal static class Entry
 
         await using (client)
         {
-            var res = await CommandHelpers.SendOrWriteValidationErrorAsync(client, CommandName, new
-            {
-                pattern,
-                kind = normalizedKind,
-                limit = normalizedLimit,
-                offset = normalizedOffset
-            });
+            var res = await CommandHelpers.SendOrWriteValidationErrorAsync(
+                client,
+                CommandName,
+                new
+                {
+                    pattern,
+                    kind = normalizedKind
+                },
+                idleTimeout,
+                page: new DotnetAICraft.Models.PageRequest(normalizedOffset, normalizedLimit));
 
             if (res is null)
                 return;

@@ -198,13 +198,22 @@ public sealed class DaemonClient : IAsyncDisposable
 
     // ── Messaging ─────────────────────────────────────────────────────────────
 
-    public async Task<DaemonResponse> SendAsync(string command, object? @params = null)
+    public async Task<DaemonResponse> SendAsync(
+        string command,
+        object? @params = null,
+        bool? debug = null,
+        int? idleTimeoutMinutes = null,
+        PageRequest? page = null)
     {
         DebugLog.Write("client", $"SendAsync begin command={command}");
+        var requestDebug = debug ?? (DebugLog.IsEnabled ? true : null);
         var request = new DaemonRequest(
             Id:      Guid.NewGuid().ToString("N"),
             Command: command,
-            Params:  @params);
+            Params:  @params,
+            Debug: requestDebug,
+            IdleTimeoutMinutes: idleTimeoutMinutes,
+            Page: page);
 
         await _writer.WriteLineAsync(JsonOutput.Serialize(request));
         await _writer.FlushAsync();
@@ -276,17 +285,12 @@ public sealed class DaemonClient : IAsyncDisposable
 
     internal static DaemonResponse ParseResponseOrThrow(string line, string command)
     {
-        DaemonResponse? response;
+        JsonDocument responseDoc;
         try
         {
-            response = JsonOutput.Deserialize<DaemonResponse>(line);
+            responseDoc = JsonDocument.Parse(line);
         }
         catch (JsonException)
-        {
-            response = null;
-        }
-
-        if (response is null)
         {
             DebugLog.Write("client", $"ParseResponseOrThrow invalid JSON command={command}");
             throw new DaemonClientValidationException(
@@ -296,8 +300,90 @@ public sealed class DaemonClient : IAsyncDisposable
                     new { command }));
         }
 
-        DebugLog.Write("client", $"ParseResponseOrThrow parsed command={command} hasError={response.Error is not null}");
-        return response;
+        using (responseDoc)
+        {
+            if (responseDoc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                throw new DaemonClientValidationException(
+                    new ErrorInfo(
+                        "DAEMON_RESPONSE_INVALID_JSON",
+                        "Daemon returned invalid JSON response.",
+                        new { command }));
+            }
+
+            var root = responseDoc.RootElement;
+            var hasStatus = root.TryGetProperty("status", out var statusElement);
+            var hasLegacyData = root.TryGetProperty("data", out _);
+
+            if (!hasStatus)
+            {
+                var mismatchCode = hasLegacyData ? "DAEMON_PROTOCOL_MISMATCH" : "DAEMON_RESPONSE_INVALID_STATUS";
+                var mismatchMessage = hasLegacyData
+                    ? "Daemon response uses legacy envelope. Client/server protocol versions are incompatible."
+                    : "Daemon response is missing required status field.";
+
+                throw new DaemonClientValidationException(
+                    new ErrorInfo(
+                        mismatchCode,
+                        mismatchMessage,
+                        new { command }));
+            }
+
+            if (statusElement.ValueKind == JsonValueKind.Null)
+            {
+                throw new DaemonClientValidationException(
+                    new ErrorInfo(
+                        "DAEMON_RESPONSE_INVALID_STATUS",
+                        "Daemon response status cannot be null.",
+                        new { command }));
+            }
+
+            if (statusElement.ValueKind != JsonValueKind.String)
+            {
+                throw new DaemonClientValidationException(
+                    new ErrorInfo(
+                        "DAEMON_RESPONSE_INVALID_STATUS",
+                        "Daemon response status must be a string value.",
+                        new { command }));
+            }
+
+            var rawStatus = statusElement.GetString();
+            if (rawStatus is not ("ok" or "problem" or "error"))
+            {
+                throw new DaemonClientValidationException(
+                    new ErrorInfo(
+                        "DAEMON_RESPONSE_INVALID_STATUS",
+                        "Daemon returned unsupported status value.",
+                        new { command, status = rawStatus }));
+            }
+
+            DaemonResponse? response;
+            try
+            {
+                response = JsonOutput.Deserialize<DaemonResponse>(responseDoc.RootElement);
+            }
+            catch (JsonException)
+            {
+                response = null;
+            }
+
+            if (response is null)
+            {
+                DebugLog.Write("client", $"ParseResponseOrThrow invalid JSON command={command}");
+                throw new DaemonClientValidationException(
+                    new ErrorInfo(
+                        "DAEMON_RESPONSE_INVALID_JSON",
+                        "Daemon returned invalid JSON response.",
+                        new { command }));
+            }
+
+            var validationError = response.ValidateContract(command);
+            if (validationError is not null)
+                throw new DaemonClientValidationException(validationError);
+
+            DebugLog.Write("client", $"ParseResponseOrThrow parsed command={command} status={response.Status.ToString().ToLowerInvariant()} hasError={response.Error is not null}");
+            return response;
+        }
     }
 
     // ── Socket path ───────────────────────────────────────────────────────────
@@ -381,10 +467,19 @@ public sealed class DaemonClient : IAsyncDisposable
     {
         var value = setting.Enabled ? setting.Normalized : "off";
         var response = await client.SendAsync("setIdleTimeout", new { value });
-        if (response.Error is null)
+        if (response.Status == DaemonResponseStatus.Ok)
             return;
 
         var error = response.Error;
+        if (error is null)
+        {
+            throw new DaemonClientValidationException(
+                new ErrorInfo(
+                    "DAEMON_RESPONSE_CONTRACT_VIOLATION",
+                    "Daemon returned non-ok status without error payload.",
+                    new { status = response.Status.ToString().ToLowerInvariant() }));
+        }
+
         throw new DaemonClientValidationException(error);
     }
 }

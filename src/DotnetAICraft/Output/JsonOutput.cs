@@ -28,4 +28,7 @@ public static class JsonOutput
 
     public static T? Deserialize<T>(string json)
         => JsonSerializer.Deserialize<T>(json, WireOptions);
+
+    public static T? Deserialize<T>(JsonElement element)
+        => JsonSerializer.Deserialize<T>(element, WireOptions);
 }

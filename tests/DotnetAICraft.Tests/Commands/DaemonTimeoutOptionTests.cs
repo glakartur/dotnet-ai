@@ -1,6 +1,7 @@
 using System.CommandLine;
 using DotnetAICraft.Commands;
 using DotnetAICraft.Commands.Shared;
+using DotnetAICraft.Tests.Support;
 using ServerEntry = DotnetAICraft.Commands.Server.Entry;
 using SymbolsEntry = DotnetAICraft.Commands.Symbols.Entry;
 using DotnetAICraft.Daemon;
@@ -9,9 +10,10 @@ using Xunit;
 
 namespace DotnetAICraft.Tests.Commands;
 
+[Collection("Console output")]
 public class DaemonTimeoutOptionTests
 {
-    private static readonly SemaphoreSlim ConsoleCaptureLock = new(1, 1);
+    private static readonly SemaphoreSlim SocketArtifactLock = new(1, 1);
 
     [Fact]
     public void DaemonBackedCommands_ExposeIdleTimeoutAndDebugOptions()
@@ -64,52 +66,45 @@ public class DaemonTimeoutOptionTests
     {
         var solutionPath = Path.Combine(Path.GetTempPath(), $"dotnet-aicraft-test-{Guid.NewGuid():N}.sln");
         var socketPath = DaemonClient.GetSocketPath(solutionPath);
-        Directory.CreateDirectory(socketPath);
-
+        await SocketArtifactLock.WaitAsync();
         try
         {
-            DaemonClient? client;
-            string output;
+            Directory.CreateDirectory(socketPath);
 
-            await ConsoleCaptureLock.WaitAsync();
             try
             {
-                var originalOut = Console.Out;
-                using var writer = new StringWriter();
-                try
+                DaemonClient? client;
+                string output;
+
+                using (var capture = ConsoleOutputCapture.Start())
                 {
-                    Console.SetOut(writer);
                     client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout: null);
-                    output = writer.ToString();
+                    output = capture.GetOutput();
                 }
-                finally
-                {
-                    Console.SetOut(originalOut);
-                }
+
+                Assert.Null(client);
+                Assert.False(string.IsNullOrWhiteSpace(output));
+
+                using var json = JsonDocument.Parse(output);
+                var error = json.RootElement.GetProperty("error");
+                Assert.Equal("DAEMON_STARTUP_STALE_SOCKET_INVALID_TYPE", error.GetProperty("code").GetString());
+
+                var details = error.GetProperty("details");
+                Assert.Equal("start", details.GetProperty("stage").GetString());
+                Assert.Equal("directory", details.GetProperty("artifactType").GetString());
+                Assert.Equal("invalidArtifactType", details.GetProperty("reasonCode").GetString());
+                Assert.True(details.TryGetProperty("artifactName", out _));
+                Assert.False(details.TryGetProperty("socketPath", out _));
             }
             finally
             {
-                ConsoleCaptureLock.Release();
+                if (Directory.Exists(socketPath))
+                    Directory.Delete(socketPath);
             }
-
-            Assert.Null(client);
-            Assert.False(string.IsNullOrWhiteSpace(output));
-
-            using var json = JsonDocument.Parse(output);
-            var error = json.RootElement.GetProperty("error");
-            Assert.Equal("DAEMON_STARTUP_STALE_SOCKET_INVALID_TYPE", error.GetProperty("code").GetString());
-
-            var details = error.GetProperty("details");
-            Assert.Equal("start", details.GetProperty("stage").GetString());
-            Assert.Equal("directory", details.GetProperty("artifactType").GetString());
-            Assert.Equal("invalidArtifactType", details.GetProperty("reasonCode").GetString());
-            Assert.True(details.TryGetProperty("artifactName", out _));
-            Assert.False(details.TryGetProperty("socketPath", out _));
         }
         finally
         {
-            if (Directory.Exists(socketPath))
-                Directory.Delete(socketPath);
+            SocketArtifactLock.Release();
         }
     }
 
@@ -118,26 +113,34 @@ public class DaemonTimeoutOptionTests
     {
         var solutionPath = Path.Combine(Path.GetTempPath(), $"dotnet-aicraft-test-{Guid.NewGuid():N}.sln");
         var socketPath = DaemonClient.GetSocketPath(solutionPath);
-        Directory.CreateDirectory(socketPath);
-
+        await SocketArtifactLock.WaitAsync();
         try
         {
-            var serverJson = await CaptureJsonOutputAsync(() => ServerEntry.StartAsync(solutionPath, idleTimeout: null));
-            var symbolsJson = await CaptureJsonOutputAsync(() => SymbolsEntry.ExecuteAsync(
-                solutionPath,
-                pattern: "Any*",
-                kind: "all",
-                limit: 1,
-                offset: 0,
-                idleTimeout: null));
+            Directory.CreateDirectory(socketPath);
 
-            AssertMatchingInvalidTypeError(serverJson, expectedStage: "liveness");
-            AssertMatchingInvalidTypeError(symbolsJson, expectedStage: "start");
+            try
+            {
+                var serverJson = await CaptureJsonOutputAsync(() => ServerEntry.StartAsync(solutionPath, idleTimeout: null));
+                var symbolsJson = await CaptureJsonOutputAsync(() => SymbolsEntry.ExecuteAsync(
+                    solutionPath,
+                    pattern: "Any*",
+                    kind: "all",
+                    limit: 1,
+                    offset: 0,
+                    idleTimeout: null));
+
+                AssertMatchingInvalidTypeError(serverJson, expectedStage: "liveness");
+                AssertMatchingInvalidTypeError(symbolsJson, expectedStage: "start");
+            }
+            finally
+            {
+                if (Directory.Exists(socketPath))
+                    Directory.Delete(socketPath);
+            }
         }
         finally
         {
-            if (Directory.Exists(socketPath))
-                Directory.Delete(socketPath);
+            SocketArtifactLock.Release();
         }
     }
 
@@ -145,33 +148,17 @@ public class DaemonTimeoutOptionTests
     public async Task SendOrWriteValidationErrorAsync_WhenClientValidationFails_WritesStructuredError()
     {
         string output;
-
-        await ConsoleCaptureLock.WaitAsync();
-        try
+        using (var capture = ConsoleOutputCapture.Start())
         {
-            var originalOut = Console.Out;
-            using var writer = new StringWriter();
-            try
-            {
-                Console.SetOut(writer);
-                var response = await CommandHelpers.SendOrWriteValidationErrorAsync(() =>
-                    throw new DaemonClientValidationException(
-                        new DotnetAICraft.Models.ErrorInfo(
-                            "DAEMON_RESPONSE_TIMEOUT",
-                            "Timed out waiting for daemon response.",
-                            new { command = "symbols" })));
+            var response = await CommandHelpers.SendOrWriteValidationErrorAsync(() =>
+                throw new DaemonClientValidationException(
+                    new DotnetAICraft.Models.ErrorInfo(
+                        "DAEMON_RESPONSE_TIMEOUT",
+                        "Timed out waiting for daemon response.",
+                        new { command = "symbols" })));
 
-                Assert.Null(response);
-                output = writer.ToString();
-            }
-            finally
-            {
-                Console.SetOut(originalOut);
-            }
-        }
-        finally
-        {
-            ConsoleCaptureLock.Release();
+            Assert.Null(response);
+            output = capture.GetOutput();
         }
 
         using var json = JsonDocument.Parse(output);
@@ -204,27 +191,9 @@ public class DaemonTimeoutOptionTests
 
     private static async Task<string> CaptureJsonOutputAsync(Func<Task> operation)
     {
-        await ConsoleCaptureLock.WaitAsync();
-        try
-        {
-            var originalOut = Console.Out;
-            using var writer = new StringWriter();
-
-            try
-            {
-                Console.SetOut(writer);
-                await operation();
-                return writer.ToString();
-            }
-            finally
-            {
-                Console.SetOut(originalOut);
-            }
-        }
-        finally
-        {
-            ConsoleCaptureLock.Release();
-        }
+        using var capture = ConsoleOutputCapture.Start();
+        await operation();
+        return capture.GetOutput();
     }
 
     private static Option<FileInfo> BuildSolutionOption()

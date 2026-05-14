@@ -181,6 +181,9 @@ public sealed class DaemonServer : IAsyncDisposable
             var request = JsonOutput.Deserialize<DaemonRequest>(line)
                 ?? throw new InvalidOperationException("Invalid request JSON.");
 
+            ValidateRequestMetadata(request);
+            ApplyRequestIdleTimeoutIfPresent(request);
+
             DebugLog.Write("server", $"HandleClientAsync request received command={request.Command} id={request.Id}");
 
             if (!CanAcceptRequests() && request.Command != "shutdown")
@@ -245,6 +248,18 @@ public sealed class DaemonServer : IAsyncDisposable
                 _ => throw new InvalidOperationException($"Unknown command: {req.Command}")
             };
 
+            if (req.Command == "symbols" && result is Models.SymbolsResultPage symbolsPage)
+            {
+                return CreateSuccessResponse(
+                    req.Id,
+                    symbolsPage.Items,
+                    new Models.PageResponse(
+                        Offset: GetSymbolsOffset(req),
+                        Limit: GetSymbolsLimit(req),
+                        HasMore: symbolsPage.HasMore),
+                    new ResponseMeta(sw.ElapsedMilliseconds, _loadedAt));
+            }
+
             return CreateSuccessResponse(
                 req.Id,
                 result,
@@ -252,14 +267,14 @@ public sealed class DaemonServer : IAsyncDisposable
         }
         catch (DaemonValidationException ex)
         {
-            return CreateErrorResponse(
+            return CreateProblemResponse(
                 req.Id,
                 ex.Error,
                 new ResponseMeta(sw.ElapsedMilliseconds, _loadedAt));
         }
         catch (ArgumentException ex)
         {
-            return CreateErrorResponse(
+            return CreateProblemResponse(
                 req.Id,
                 new ErrorInfo("INVALID_PARAMS", ex.Message),
                 new ResponseMeta(sw.ElapsedMilliseconds, _loadedAt));
@@ -279,17 +294,36 @@ public sealed class DaemonServer : IAsyncDisposable
     }
 
     private static DaemonResponse CreateSuccessResponse(string id, object? data, ResponseMeta? meta)
+        => CreateSuccessResponse(id, data, page: null, meta);
+
+    private static DaemonResponse CreateSuccessResponse(string id, object? data, Models.PageResponse? page, ResponseMeta? meta)
         => new(
             Id: id,
-            Data: data,
+            Status: DaemonResponseStatus.Ok,
+            Result: data,
             Error: null,
+            Debug: null,
+            Page: page,
+            Meta: meta);
+
+    private static DaemonResponse CreateProblemResponse(string id, ErrorInfo error, ResponseMeta? meta)
+        => new(
+            Id: id,
+            Status: DaemonResponseStatus.Problem,
+            Result: null,
+            Error: error,
+            Debug: null,
+            Page: null,
             Meta: meta);
 
     private static DaemonResponse CreateErrorResponse(string id, ErrorInfo error, ResponseMeta? meta)
         => new(
             Id: id,
-            Data: null,
+            Status: DaemonResponseStatus.Error,
+            Result: null,
             Error: error,
+            Debug: null,
+            Page: null,
             Meta: meta);
 
     // ── Command handlers ──────────────────────────────────────────────────────
@@ -412,8 +446,8 @@ public sealed class DaemonServer : IAsyncDisposable
         var p       = GetParams(req);
         var pattern = p.TryGetValue("pattern", out var pat) ? pat?.ToString() ?? "*" : "*";
         var kind    = p.TryGetValue("kind", out var k) ? k?.ToString() ?? "all" : "all";
-        var limit   = GetOptionalInt(p, "limit");
-        var offset  = GetOptionalInt(p, "offset");
+        var limit   = req.Page?.Limit ?? GetOptionalInt(p, "limit");
+        var offset  = req.Page?.Offset ?? GetOptionalInt(p, "offset");
 
         return await DotnetAICraft.Commands.Symbols.UseCase.ResolveAsync(
             GetSolution(),
@@ -519,6 +553,15 @@ public sealed class DaemonServer : IAsyncDisposable
     {
         lock (_idleLock)
         {
+            if (_hasExplicitIdleTimeoutOverride && _idleTimeout.Equals(setting))
+            {
+                return new Models.IdleTimeoutUpdateResult(
+                    Applied: true,
+                    Mode: setting.Enabled ? "duration" : "off",
+                    Value: setting.Enabled ? setting.Normalized : null,
+                    Changed: false);
+            }
+
             DateTime nextDeadlineUtc;
             var effectiveSetting = GetEffectiveIdleTimeoutSetting(setting);
             if (effectiveSetting.Enabled)
@@ -1930,6 +1973,52 @@ public sealed class DaemonServer : IAsyncDisposable
 
     private void Log(string message)
         => Console.Error.WriteLine($"[daemon {DateTime.Now:HH:mm:ss}] {message}");
+
+    private static void ValidateRequestMetadata(DaemonRequest request)
+    {
+        if (request.IdleTimeoutMinutes is <= 0)
+        {
+            throw new DaemonValidationException(new ErrorInfo(
+                "INVALID_IDLE_TIMEOUT",
+                "idleTimeoutMinutes must be greater than zero."));
+        }
+
+        if (request.Page is null)
+            return;
+
+        if (request.Page.Limit <= 0)
+        {
+            throw new DaemonValidationException(new ErrorInfo(
+                "INVALID_PARAMS",
+                "page.limit must be greater than zero."));
+        }
+
+        if (request.Page.Offset < 0)
+        {
+            throw new DaemonValidationException(new ErrorInfo(
+                "INVALID_PARAMS",
+                "page.offset must be greater than or equal to zero."));
+        }
+    }
+
+    private void ApplyRequestIdleTimeoutIfPresent(DaemonRequest request)
+    {
+        if (request.IdleTimeoutMinutes is null)
+            return;
+
+        var minutes = request.IdleTimeoutMinutes.Value;
+        var setting = new DaemonIdleTimeoutSetting(
+            Enabled: true,
+            Duration: TimeSpan.FromMinutes(minutes),
+            Normalized: $"{minutes}m");
+        _ = ApplyIdleTimeout(setting);
+    }
+
+    private static int GetSymbolsOffset(DaemonRequest request)
+        => request.Page?.Offset ?? SymbolsDefaultOffset;
+
+    private static int GetSymbolsLimit(DaemonRequest request)
+        => request.Page?.Limit ?? SymbolsDefaultLimit;
 
     public async ValueTask DisposeAsync()
     {

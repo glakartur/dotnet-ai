@@ -124,13 +124,71 @@ public record ErrorInfo(
 public record DaemonRequest(
     string Id,
     string Command,
-    object? Params);
+    object? Params,
+    bool? Debug = null,
+    int? IdleTimeoutMinutes = null,
+    PageRequest? Page = null);
+
+public record PageRequest(
+    int Offset,
+    int Limit);
 
 public record DaemonResponse(
     string Id,
-    object? Data,
-    ErrorInfo? Error,
-    ResponseMeta? Meta);
+    DaemonResponseStatus Status,
+    object? Result = null,
+    ErrorInfo? Error = null,
+    object? Debug = null,
+    PageResponse? Page = null,
+    ResponseMeta? Meta = null)
+{
+    public ErrorInfo? ValidateContract(string? command = null)
+    {
+        if (!Enum.IsDefined(Status) || Status == DaemonResponseStatus.NotSet)
+        {
+            return new ErrorInfo(
+                "DAEMON_RESPONSE_INVALID_STATUS",
+                "Daemon returned unsupported status value.",
+                new { command, status = Status.ToString().ToLowerInvariant() });
+        }
+
+        if (Status == DaemonResponseStatus.Ok)
+        {
+            if (Error is not null)
+            {
+                return new ErrorInfo(
+                    "DAEMON_RESPONSE_CONTRACT_VIOLATION",
+                    "Daemon returned ok status with non-null error payload.",
+                    new { command });
+            }
+
+            return null;
+        }
+
+        if (Error is null)
+        {
+            return new ErrorInfo(
+                "DAEMON_RESPONSE_CONTRACT_VIOLATION",
+                "Daemon returned non-ok status without error payload.",
+                new { command, status = Status.ToString().ToLowerInvariant() });
+        }
+
+        return null;
+    }
+}
+
+public enum DaemonResponseStatus
+{
+    NotSet,
+    Ok,
+    Problem,
+    Error
+}
+
+public record PageResponse(
+    int Offset,
+    int Limit,
+    bool HasMore);
 
 public record ResponseMeta(
     long DurationMs,

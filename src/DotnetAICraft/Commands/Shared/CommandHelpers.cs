@@ -27,13 +27,23 @@ internal static class CommandHelpers
     }
 
     public static object? GetDataOrNull(DaemonResponse response)
-        => response.Data;
+        => response.Result;
 
     public static async Task<DaemonResponse?> SendOrWriteValidationErrorAsync(
         DaemonClient client,
         string command,
-        object? @params = null)
-        => await SendOrWriteValidationErrorAsync(() => client.SendAsync(command, @params));
+        object? @params = null,
+        string? idleTimeout = null,
+        PageRequest? page = null)
+    {
+        if (!TryParseIdleTimeoutMinutes(idleTimeout, out var idleTimeoutMinutes, out var parseError))
+        {
+            JsonOutput.WriteError(parseError!.Code, parseError.Message, parseError.Details);
+            return null;
+        }
+
+        return await SendOrWriteValidationErrorAsync(() => client.SendAsync(command, @params, idleTimeoutMinutes: idleTimeoutMinutes, page: page));
+    }
 
     internal static async Task<DaemonResponse?> SendOrWriteValidationErrorAsync(
         Func<Task<DaemonResponse>> send)
@@ -55,13 +65,54 @@ internal static class CommandHelpers
 
     public static bool TryHandleError(DaemonResponse response)
     {
-        if (response.Error is null)
+        if (response.Status == DaemonResponseStatus.Ok)
             return false;
+
+        if (response.Error is null)
+        {
+            JsonOutput.WriteError(
+                "DAEMON_RESPONSE_CONTRACT_VIOLATION",
+                "Daemon returned non-ok status without error payload.",
+                new { status = response.Status.ToString().ToLowerInvariant() });
+            return true;
+        }
 
         JsonOutput.WriteError(
             response.Error.Code,
             response.Error.Message,
             response.Error.Details);
         return true;
+    }
+
+    internal static bool TryParseIdleTimeoutMinutes(string? idleTimeout, out int? idleTimeoutMinutes, out ErrorInfo? error)
+    {
+        idleTimeoutMinutes = null;
+
+        if (!DaemonIdleTimeoutParser.TryParseOptional(idleTimeout, out var parsedTimeout, out var parseError))
+        {
+            error = parseError;
+            return false;
+        }
+
+        if (parsedTimeout is not { Enabled: true })
+        {
+            error = null;
+            return true;
+        }
+
+        try
+        {
+            idleTimeoutMinutes = checked((int)parsedTimeout.Duration.TotalMinutes);
+            error = null;
+            return true;
+        }
+        catch (OverflowException)
+        {
+            error = new ErrorInfo(
+                "INVALID_IDLE_TIMEOUT",
+                "Idle timeout value is too large.",
+                new { acceptedValues = "off | <positive duration with unit: m|h>" });
+            return false;
+        }
     }
 }
