@@ -5,7 +5,43 @@ namespace DotnetAICraft.Commands.Server;
 
 internal static class UseCase
 {
-    internal static async Task<ErrorInfo?> StartAsync(string solutionPath, DaemonIdleTimeoutSetting? timeout)
+    internal static async Task<ErrorInfo?> EnsureRunningAsync(string solutionPath, DaemonIdleTimeoutSetting? timeout)
+    {
+        var outcome = await DaemonStartupCoordinator.ConnectOrStartAsync(solutionPath, timeout);
+
+        if (outcome.Type == DaemonStartupOutcomeType.Failed)
+        {
+            return outcome.Error ?? new ErrorInfo("DAEMON_STARTUP_FAILED", "Daemon startup failed.");
+        }
+
+        var client = outcome.Client
+            ?? throw new InvalidOperationException("Daemon startup coordinator returned no client.");
+
+        await using (client)
+        {
+            // On attach to an existing daemon with no --idle-timeout, send a no-op
+            // `status` so the daemon's per-request BeginRequest/EndRequest cycle
+            // resets the idle deadline at the currently effective session value.
+            // When --idle-timeout is provided, ConnectOrStartAsync has already
+            // routed through ApplyIdleTimeoutAsync (setIdleTimeout) which itself
+            // resets the deadline.
+            if (outcome.Type == DaemonStartupOutcomeType.AttachedExisting && timeout is null)
+            {
+                try
+                {
+                    await client.SendAsync("status");
+                }
+                catch (DaemonClientValidationException ex)
+                {
+                    return ex.Error;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    internal static async Task<ErrorInfo?> DaemonAsync(string solutionPath, DaemonIdleTimeoutSetting? timeout)
     {
         var decision = await DaemonStartupCoordinator.PrepareServerStartAsync(solutionPath);
         if (decision.Type == DaemonServerStartDecisionType.AttachedExisting)

@@ -129,7 +129,7 @@ public class DaemonTimeoutOptionTests
                     offset: 0,
                     idleTimeout: null));
 
-                AssertMatchingInvalidTypeError(serverJson, expectedStage: "liveness");
+                AssertMatchingInvalidTypeError(serverJson, expectedStage: "start");
                 AssertMatchingInvalidTypeError(symbolsJson, expectedStage: "start");
             }
             finally

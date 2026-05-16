@@ -84,7 +84,7 @@ public sealed class DaemonClient : IAsyncDisposable
         var exe = Environment.ProcessPath
             ?? throw new InvalidOperationException("Cannot determine current process path.");
 
-        var args = new List<string> { "server", "start", "--solution", solutionPath };
+        var args = new List<string> { "server", "daemon", "--solution", solutionPath };
         if (idleTimeout is not null)
         {
             var value = idleTimeout.Enabled ? idleTimeout.Normalized : "off";

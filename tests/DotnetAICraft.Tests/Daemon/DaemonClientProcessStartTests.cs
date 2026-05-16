@@ -9,7 +9,7 @@ public sealed class DaemonClientProcessStartTests
     [Fact]
     public void CreateDaemonStartInfo_ConfiguresSafeNonInheritingDefaults()
     {
-        var startInfo = DaemonClient.CreateDaemonStartInfo("dotnet-aicraft", ["server", "start"]);
+        var startInfo = DaemonClient.CreateDaemonStartInfo("dotnet-aicraft", ["server", "daemon"]);
 
         Assert.Equal("dotnet-aicraft", startInfo.FileName);
         Assert.False(startInfo.UseShellExecute);
@@ -22,7 +22,7 @@ public sealed class DaemonClientProcessStartTests
     [Fact]
     public void CreateDaemonStartInfo_PreservesArgumentOrder()
     {
-        var args = new[] { "server", "start", "--solution", "/tmp/sample.sln", "--idle-timeout", "off" };
+        var args = new[] { "server", "daemon", "--solution", "/tmp/sample.sln", "--idle-timeout", "off" };
         var startInfo = DaemonClient.CreateDaemonStartInfo("dotnet-aicraft", args);
 
         Assert.Equal(args.Length, startInfo.ArgumentList.Count);

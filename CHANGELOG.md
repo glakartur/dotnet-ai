@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- `dotnet aicraft server start` is now a fast, idempotent ensure-running call.
+  It no longer runs the daemon foreground process: instead it attaches to a
+  running daemon (extending the idle deadline) or spawns one in the background
+  and returns once it is ready. With `--idle-timeout` it applies the new
+  value identically to `server reload --idle-timeout`. External scripts that
+  relied on `server start` blocking until shutdown should switch to a
+  long-lived monitoring loop or use the daemon's idle-timeout settings.
+- Daemon auto-spawn (from query commands and `server start`) now invokes an
+  internal hidden `server daemon` subcommand instead of `server start`. The
+  `daemon` subcommand is intentionally undocumented and is for internal use
+  only.
+
 ## [0.1.0] — unreleased
 
 ### Added

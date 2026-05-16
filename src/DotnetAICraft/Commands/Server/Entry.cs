@@ -1,8 +1,25 @@
+using DotnetAICraft.Diagnostics;
+
 namespace DotnetAICraft.Commands.Server;
 
 internal static class Entry
 {
     internal static async Task StartAsync(string solutionPath, string? idleTimeout)
+    {
+        DebugLog.Write("cli", "server-start explicit");
+
+        if (!Validation.TryParseIdleTimeout(idleTimeout, out var timeout, out var error))
+        {
+            OutputMapping.WriteError(error);
+            return;
+        }
+
+        var startError = await UseCase.EnsureRunningAsync(solutionPath, timeout);
+        if (startError is not null)
+            OutputMapping.WriteError(startError);
+    }
+
+    internal static async Task DaemonAsync(string solutionPath, string? idleTimeout)
     {
         if (!Validation.TryParseIdleTimeout(idleTimeout, out var timeout, out var error))
         {
@@ -10,7 +27,7 @@ internal static class Entry
             return;
         }
 
-        var startError = await UseCase.StartAsync(solutionPath, timeout);
+        var startError = await UseCase.DaemonAsync(solutionPath, timeout);
         if (startError is not null)
             OutputMapping.WriteError(startError);
     }

@@ -142,8 +142,8 @@ Output: `SymbolsResultPage { items[], hasMore }`
 dotnet aicraft server status -s App.sln         # daemon status + solution stats
 dotnet aicraft server reload -s App.sln         # reload after project structure changes
 dotnet aicraft server stop   -s App.sln         # stop the daemon
-dotnet aicraft server start  -s App.sln --idle-timeout 30m   # start with custom timeout
-dotnet aicraft server start  -s App.sln --idle-timeout off   # disable idle auto-shutdown
+dotnet aicraft server start  -s App.sln --idle-timeout 30m   # ensure daemon is running + set / extend session idle timeout (returns promptly)
+dotnet aicraft server start  -s App.sln --idle-timeout off   # disable idle auto-shutdown (returns promptly)
 ```
 
 ## Agent Workflows

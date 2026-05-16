@@ -14,9 +14,34 @@ public static class ServerCommand
         var cmd = new Command("server", "Manage the analysis daemon");
 
         cmd.Add(BuildStart(solutionOption, idleTimeoutOption, debugOption));
+        cmd.Add(BuildDaemon(solutionOption, idleTimeoutOption, debugOption));
         cmd.Add(BuildStop(solutionOption, debugOption));
         cmd.Add(BuildStatus(solutionOption, debugOption));
         cmd.Add(BuildReload(solutionOption, idleTimeoutOption, debugOption));
+
+        return cmd;
+    }
+
+    private static Command BuildDaemon(
+        Option<FileInfo> solutionOption,
+        Option<string?> idleTimeoutOption,
+        Option<bool>? debugOption)
+    {
+        var cmd = new Command("daemon", "Run the analysis daemon in the foreground (internal use only)")
+        {
+            Hidden = true,
+        };
+        cmd.Add(solutionOption);
+        cmd.Add(idleTimeoutOption);
+        if (debugOption is not null)
+            cmd.Add(debugOption);
+
+        cmd.SetAction(async parseResult =>
+        {
+            var solution = parseResult.GetRequiredValue(solutionOption);
+            var idleTimeout = parseResult.GetValue(idleTimeoutOption);
+            await Entry.DaemonAsync(solution.FullName, idleTimeout);
+        });
 
         return cmd;
     }

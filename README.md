@@ -214,7 +214,10 @@ dotnet aicraft server reload --solution App.sln
 # Stop the daemon
 dotnet aicraft server stop --solution App.sln
 
-# Start daemon with session-scoped idle timeout
+# Ensure the daemon is running and set / extend the session-scoped idle timeout.
+# This call returns promptly: if the daemon is already up it extends the idle
+# deadline; if not, it spawns the daemon in the background and returns once
+# the daemon is ready to accept commands.
 dotnet aicraft server start --solution App.sln --idle-timeout 30m
 
 # Disable idle auto-shutdown for current daemon session
@@ -311,7 +314,7 @@ $ dotnet aicraft callers --solution App.sln --file Foo.cs --line 10 --col 5
 | `dotnet aicraft server status` | Daemon status |
 | `dotnet aicraft server reload` | Reload solution |
 | `dotnet aicraft server stop` | Stop daemon |
-| `dotnet aicraft server start` | Start daemon with custom idle timeout |
+| `dotnet aicraft server start` | Ensure daemon is running and set / extend the session idle timeout (returns promptly) |
 
 All commands output **JSON to stdout**. Daemon logs go to **stderr** so they
 don't interfere with JSON parsing.

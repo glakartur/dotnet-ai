@@ -248,15 +248,17 @@ Output:
 ### `server start`
 
 ```bash
-# Start with default 60m timeout
+# Ensure the daemon is running (returns promptly; spawns it in the background if needed)
 dotnet aicraft server start --solution App.sln
 
-# Start with custom timeout
+# Ensure running and set / extend the session-scoped idle timeout
 dotnet aicraft server start --solution App.sln --idle-timeout 30m
 
 # Disable auto-shutdown for this session
 dotnet aicraft server start --solution App.sln --idle-timeout off
 ```
+
+`server start` returns in roughly `server status` time. With no running daemon it spawns one in the background and waits only until the daemon is ready. With a running daemon it extends the idle deadline (no `--idle-timeout`) or overwrites the session idle timeout (with `--idle-timeout`, equivalent to `server reload --idle-timeout`).
 
 Note: Any analysis command also starts the daemon if not already running.
 

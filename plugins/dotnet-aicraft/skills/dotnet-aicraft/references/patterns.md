@@ -126,7 +126,8 @@ Check `running: true` and `projects` / `documents` counts. If not running, the n
 
 ### Long-running agent session
 
-Prevent idle shutdown during an extended session:
+Prevent idle shutdown during an extended session. `server start` returns
+immediately after applying the timeout — no foreground process to manage:
 
 ```bash
 dotnet aicraft server start --solution App.sln --idle-timeout off
