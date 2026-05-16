@@ -813,6 +813,8 @@ public sealed class DaemonServer : IAsyncDisposable
 
         async void OnChange(object _, FileSystemEventArgs e)
         {
+            if (IsBuildArtifactPath(e.FullPath)) return;
+
             CancellationTokenSource cts;
             lock (debounceLock)
             {
@@ -829,6 +831,24 @@ public sealed class DaemonServer : IAsyncDisposable
 
         _watcher.Changed += OnChange;
         _watcher.Created += OnChange;
+    }
+
+    private static bool IsBuildArtifactPath(string fullPath)
+    {
+        // Skip build outputs (obj/, bin/) and auto-generated XAML codebehind (*.g.cs).
+        // These regenerate during MSBuild design-time build (which Roslyn runs on solution load)
+        // and don't represent user edits — propagating them as WithDocumentText updates produces
+        // a noisy cascade and treats build artifacts as source-of-truth.
+        var sep = Path.DirectorySeparatorChar;
+        var alt = Path.AltDirectorySeparatorChar;
+        var cmp = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+        if (fullPath.Contains($"{sep}obj{sep}", cmp) || fullPath.Contains($"{alt}obj{alt}", cmp) ||
+            fullPath.Contains($"{sep}bin{sep}", cmp) || fullPath.Contains($"{alt}bin{alt}", cmp))
+            return true;
+
+        var name = Path.GetFileName(fullPath);
+        return name.EndsWith(".g.cs", cmp) || name.EndsWith(".g.i.cs", cmp);
     }
 
     private void StartMetadataWatcher()
