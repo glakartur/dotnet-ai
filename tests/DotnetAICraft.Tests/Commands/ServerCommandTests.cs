@@ -1,5 +1,6 @@
 using System.CommandLine;
 using DotnetAICraft.Commands;
+using DotnetAICraft.Output;
 using Xunit;
 
 namespace DotnetAICraft.Tests.Commands;
@@ -9,7 +10,7 @@ public class ServerCommandTests
     [Fact]
     public void Build_ExposesExpectedSubcommandsAndOptions()
     {
-        var command = ServerCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption());
+        var command = ServerCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption(), formatOption: BuildFormatOption());
 
         Assert.Equal("server", command.Name);
 
@@ -20,13 +21,20 @@ public class ServerCommandTests
 
         AssertContainsOption(start, "--solution");
         AssertContainsOption(start, "--idle-timeout");
+        AssertContainsOption(start, "--format");
 
         AssertContainsOption(stop, "--solution");
+        AssertContainsOption(stop, "--format");
         AssertContainsOption(status, "--solution");
+        AssertContainsOption(status, "--format");
 
         AssertContainsOption(reload, "--solution");
         AssertContainsOption(reload, "--idle-timeout");
+        AssertContainsOption(reload, "--format");
     }
+
+    private static Option<OutputFormat> BuildFormatOption()
+        => new("--format") { DefaultValueFactory = _ => OutputFormat.Text };
 
     private static Option<FileInfo> BuildSolutionOption()
         => new("--solution", "-s") { Required = true };

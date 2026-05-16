@@ -1,5 +1,6 @@
 using System.CommandLine;
 using DotnetAICraft.Commands;
+using DotnetAICraft.Output;
 using Xunit;
 
 namespace DotnetAICraft.Tests.Commands;
@@ -9,14 +10,18 @@ public class ImplsCommandTests
     [Fact]
     public void Build_ExposesExpectedOptionsAndAliases()
     {
-        var command = ImplsCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption());
+        var command = ImplsCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption(), formatOption: BuildFormatOption());
 
         Assert.Equal("impls", command.Name);
         AssertContainsOption(command, "--solution");
         AssertContainsOption(command, "-s");
         AssertContainsOption(command, "--symbol");
         AssertContainsOption(command, "--idle-timeout");
+        AssertContainsOption(command, "--format");
     }
+
+    private static Option<OutputFormat> BuildFormatOption()
+        => new("--format") { DefaultValueFactory = _ => OutputFormat.Text };
 
     [Fact]
     public void Build_SymbolOption_IsRequired()

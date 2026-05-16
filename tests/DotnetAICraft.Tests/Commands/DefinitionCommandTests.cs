@@ -1,6 +1,7 @@
 using System.CommandLine;
 using DotnetAICraft.Commands;
 using DotnetAICraft.Commands.Definition;
+using DotnetAICraft.Output;
 using Xunit;
 
 namespace DotnetAICraft.Tests.Commands;
@@ -13,7 +14,7 @@ public class DefinitionCommandTests
         var solutionOption = BuildSolutionOption();
         var idleTimeoutOption = BuildIdleTimeoutOption();
 
-        var command = DefinitionCommand.Build(solutionOption, idleTimeoutOption);
+        var command = DefinitionCommand.Build(solutionOption, idleTimeoutOption, formatOption: BuildFormatOption());
 
         Assert.Equal("definition", command.Name);
         AssertContainsOption(command, "--solution");
@@ -23,7 +24,11 @@ public class DefinitionCommandTests
         AssertContainsOption(command, "--col");
         AssertContainsOption(command, "--symbol");
         AssertContainsOption(command, "--idle-timeout");
+        AssertContainsOption(command, "--format");
     }
+
+    private static Option<OutputFormat> BuildFormatOption()
+        => new("--format") { DefaultValueFactory = _ => OutputFormat.Text };
 
     [Fact]
     public void ValidateArgs_RejectsMissingMixedOrPartialInputModes()

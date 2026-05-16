@@ -1,4 +1,6 @@
+using System.Text.Json;
 using DotnetAICraft.Commands.Shared;
+using DotnetAICraft.Models;
 using DotnetAICraft.Output;
 
 namespace DotnetAICraft.Commands.Unused;
@@ -13,15 +15,16 @@ internal static class Entry
         string? project,
         bool publicOnly,
         bool includeGenerated,
-        string? idleTimeout)
+        string? idleTimeout,
+        OutputFormat format = OutputFormat.Text)
     {
         if (!Validation.TryNormalizeKind(kind, out var normalizedKind, out var kindError))
         {
-            JsonOutput.WriteError(kindError!.Code, kindError.Message, kindError.Details);
+            CommandHelpers.WriteError(format, kindError!.Code, kindError.Message, kindError.Details);
             return;
         }
 
-        var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout);
+        var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout, format);
         if (client is null)
             return;
 
@@ -33,13 +36,24 @@ internal static class Entry
                 project,
                 publicOnly,
                 includeGenerated
-            }, idleTimeout);
+            }, idleTimeout, format: format);
 
             if (res is null)
                 return;
 
-            if (!CommandHelpers.TryHandleError(res))
+            if (CommandHelpers.TryHandleError(res, format))
+                return;
+
+            if (format == OutputFormat.Json)
+            {
                 JsonOutput.Write(CommandHelpers.GetDataOrNull(res));
+            }
+            else
+            {
+                var summary = JsonOutput.Deserialize<UnusedScanSummary>((JsonElement)res.Result!);
+                if (summary is not null)
+                    TextOutput.WriteUnused(summary, solutionPath);
+            }
         }
     }
 }

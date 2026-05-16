@@ -1,6 +1,7 @@
 using System.CommandLine;
 using DotnetAICraft.Commands;
 using DotnetAICraft.Commands.Refs;
+using DotnetAICraft.Output;
 using Xunit;
 
 namespace DotnetAICraft.Tests.Commands;
@@ -10,7 +11,7 @@ public class RefsCommandTests
     [Fact]
     public void Build_ExposesExpectedOptionsAndAliases()
     {
-        var command = RefsCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption());
+        var command = RefsCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption(), formatOption: BuildFormatOption());
 
         Assert.Equal("refs", command.Name);
         AssertContainsOption(command, "--solution");
@@ -20,7 +21,11 @@ public class RefsCommandTests
         AssertContainsOption(command, "--col");
         AssertContainsOption(command, "--symbol");
         AssertContainsOption(command, "--idle-timeout");
+        AssertContainsOption(command, "--format");
     }
+
+    private static Option<OutputFormat> BuildFormatOption()
+        => new("--format") { DefaultValueFactory = _ => OutputFormat.Text };
 
     [Fact]
     public void ValidateArgs_RejectsMissingModes()

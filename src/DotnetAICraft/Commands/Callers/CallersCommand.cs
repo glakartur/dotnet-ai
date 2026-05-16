@@ -1,6 +1,7 @@
-﻿using System.CommandLine;
+using System.CommandLine;
 using DotnetAICraft.Daemon;
 using DotnetAICraft.Commands.Callers;
+using DotnetAICraft.Output;
 
 namespace DotnetAICraft.Commands;
 
@@ -9,7 +10,8 @@ public static class CallersCommand
     public static Command Build(
         Option<FileInfo> solutionOption,
         Option<string?> idleTimeoutOption,
-        Option<bool>? debugOption = null)
+        Option<bool>? debugOption = null,
+        Option<OutputFormat>? formatOption = null)
     {
         var fileOpt = new Option<FileInfo?>("--file") { Description = "Source file containing the symbol" };
         var lineOpt = new Option<int?>("--line") { Description = "1-based line number" };
@@ -42,6 +44,8 @@ public static class CallersCommand
 
         if (debugOption is not null)
             cmd.Add(debugOption);
+        if (formatOption is not null)
+            cmd.Add(formatOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -53,6 +57,7 @@ public static class CallersCommand
             var direction = parseResult.GetRequiredValue(directionOpt);
             var depth = parseResult.GetRequiredValue(depthOpt);
             var idleTimeout = parseResult.GetValue(idleTimeoutOption);
+            var format = formatOption is null ? OutputFormat.Text : parseResult.GetValue(formatOption);
 
             await Entry.ExecuteAsync(
                 solution.FullName,
@@ -62,7 +67,8 @@ public static class CallersCommand
                 symbol,
                 direction,
                 depth,
-                idleTimeout);
+                idleTimeout,
+                format);
         });
 
         return cmd;

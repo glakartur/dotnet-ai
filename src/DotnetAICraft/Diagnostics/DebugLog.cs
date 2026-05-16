@@ -47,4 +47,14 @@ public static class DebugLog
 
         Console.Error.WriteLine($"[dotnet-aicraft debug {DateTime.UtcNow:O}] [{component}] {message}");
     }
+
+    public static void WriteResponseDebug(object payload)
+    {
+        var json = DotnetAICraft.Output.JsonOutput.Serialize(payload);
+        // Write each line to stderr to keep debug output before result on stdout.
+        using var reader = new StringReader(json);
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
+            Console.Error.WriteLine(line);
+    }
 }

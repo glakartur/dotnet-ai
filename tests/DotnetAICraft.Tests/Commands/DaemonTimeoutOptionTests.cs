@@ -78,7 +78,7 @@ public class DaemonTimeoutOptionTests
 
                 using (var capture = ConsoleOutputCapture.Start())
                 {
-                    client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout: null);
+                    client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout: null, format: DotnetAICraft.Output.OutputFormat.Json);
                     output = capture.GetOutput();
                 }
 
@@ -120,14 +120,15 @@ public class DaemonTimeoutOptionTests
 
             try
             {
-                var serverJson = await CaptureJsonOutputAsync(() => ServerEntry.StartAsync(solutionPath, idleTimeout: null));
+                var serverJson = await CaptureJsonOutputAsync(() => ServerEntry.StartAsync(solutionPath, idleTimeout: null, format: DotnetAICraft.Output.OutputFormat.Json));
                 var symbolsJson = await CaptureJsonOutputAsync(() => SymbolsEntry.ExecuteAsync(
                     solutionPath,
                     pattern: "Any*",
                     kind: "all",
                     limit: 1,
                     offset: 0,
-                    idleTimeout: null));
+                    idleTimeout: null,
+                    format: DotnetAICraft.Output.OutputFormat.Json));
 
                 AssertMatchingInvalidTypeError(serverJson, expectedStage: "start");
                 AssertMatchingInvalidTypeError(symbolsJson, expectedStage: "start");
@@ -155,7 +156,8 @@ public class DaemonTimeoutOptionTests
                     new DotnetAICraft.Models.ErrorInfo(
                         "DAEMON_RESPONSE_TIMEOUT",
                         "Timed out waiting for daemon response.",
-                        new { command = "symbols" })));
+                        new { command = "symbols" })),
+                format: DotnetAICraft.Output.OutputFormat.Json);
 
             Assert.Null(response);
             output = capture.GetOutput();

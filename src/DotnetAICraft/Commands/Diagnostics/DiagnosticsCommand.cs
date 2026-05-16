@@ -1,6 +1,7 @@
 using System.CommandLine;
 using DotnetAICraft.Daemon;
 using DotnetAICraft.Commands.Diagnostics;
+using DotnetAICraft.Output;
 
 namespace DotnetAICraft.Commands;
 
@@ -11,7 +12,8 @@ public static class DiagnosticsCommand
     public static Command Build(
         Option<FileInfo> solutionOption,
         Option<string?> idleTimeoutOption,
-        Option<bool>? debugOption = null)
+        Option<bool>? debugOption = null,
+        Option<OutputFormat>? formatOption = null)
     {
         var severityOpt = new Option<string>("--severity")
         {
@@ -36,6 +38,8 @@ public static class DiagnosticsCommand
 
         if (debugOption is not null)
             cmd.Add(debugOption);
+        if (formatOption is not null)
+            cmd.Add(formatOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -44,8 +48,9 @@ public static class DiagnosticsCommand
             var project = parseResult.GetValue(projectOpt);
             var file = parseResult.GetValue(fileOpt);
             var idleTimeout = parseResult.GetValue(idleTimeoutOption);
+            var format = formatOption is null ? OutputFormat.Text : parseResult.GetValue(formatOption);
 
-            await Entry.ExecuteAsync(solution.FullName, severity, project, file, idleTimeout, AcceptedSeverities);
+            await Entry.ExecuteAsync(solution.FullName, severity, project, file, idleTimeout, AcceptedSeverities, format);
         });
 
         return cmd;

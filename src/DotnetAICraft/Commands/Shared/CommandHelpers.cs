@@ -9,7 +9,8 @@ internal static class CommandHelpers
 {
     public static async Task<DaemonClient?> ConnectOrWriteValidationErrorAsync(
         string solutionPath,
-        string? idleTimeout)
+        string? idleTimeout,
+        OutputFormat format = OutputFormat.Text)
     {
         DebugLog.Write("client", $"ConnectOrWriteValidationErrorAsync begin solution={solutionPath} idleTimeout={idleTimeout ?? "<null>"}");
         try
@@ -21,7 +22,7 @@ internal static class CommandHelpers
         catch (DaemonClientValidationException ex)
         {
             DebugLog.Write("client", $"ConnectOrWriteValidationErrorAsync validation error code={ex.Error.Code}");
-            JsonOutput.WriteError(ex.Error.Code, ex.Error.Message, ex.Error.Details);
+            WriteError(format, ex.Error.Code, ex.Error.Message, ex.Error.Details);
             return null;
         }
     }
@@ -34,54 +35,73 @@ internal static class CommandHelpers
         string command,
         object? @params = null,
         string? idleTimeout = null,
-        PageRequest? page = null)
+        PageRequest? page = null,
+        OutputFormat format = OutputFormat.Text)
     {
         if (!TryParseIdleTimeoutMinutes(idleTimeout, out var idleTimeoutMinutes, out var parseError))
         {
-            JsonOutput.WriteError(parseError!.Code, parseError.Message, parseError.Details);
+            WriteError(format, parseError!.Code, parseError.Message, parseError.Details);
             return null;
         }
 
-        return await SendOrWriteValidationErrorAsync(() => client.SendAsync(command, @params, idleTimeoutMinutes: idleTimeoutMinutes, page: page));
+        return await SendOrWriteValidationErrorAsync(() => client.SendAsync(command, @params, idleTimeoutMinutes: idleTimeoutMinutes, page: page), format);
     }
 
     internal static async Task<DaemonResponse?> SendOrWriteValidationErrorAsync(
-        Func<Task<DaemonResponse>> send)
+        Func<Task<DaemonResponse>> send,
+        OutputFormat format = OutputFormat.Text)
     {
         DebugLog.Write("client", "SendOrWriteValidationErrorAsync begin");
         try
         {
             var response = await send();
             DebugLog.Write("client", "SendOrWriteValidationErrorAsync response received");
+            FlushResponseDebugToStderr(response);
             return response;
         }
         catch (DaemonClientValidationException ex)
         {
             DebugLog.Write("client", $"SendOrWriteValidationErrorAsync validation error code={ex.Error.Code}");
-            JsonOutput.WriteError(ex.Error.Code, ex.Error.Message, ex.Error.Details);
+            WriteError(format, ex.Error.Code, ex.Error.Message, ex.Error.Details);
             return null;
         }
     }
 
-    public static bool TryHandleError(DaemonResponse response)
+    public static bool TryHandleError(DaemonResponse response, OutputFormat format = OutputFormat.Text)
     {
         if (response.Status == DaemonResponseStatus.Ok)
             return false;
 
         if (response.Error is null)
         {
-            JsonOutput.WriteError(
+            WriteError(
+                format,
                 "DAEMON_RESPONSE_CONTRACT_VIOLATION",
                 "Daemon returned non-ok status without error payload.",
                 new { status = response.Status.ToString().ToLowerInvariant() });
             return true;
         }
 
-        JsonOutput.WriteError(
+        WriteError(
+            format,
             response.Error.Code,
             response.Error.Message,
             response.Error.Details);
         return true;
+    }
+
+    internal static void WriteError(OutputFormat format, string code, string message, object? details)
+    {
+        if (format == OutputFormat.Json)
+            JsonOutput.WriteError(code, message, details);
+        else
+            TextOutput.WriteError(code, message, details);
+    }
+
+    internal static void FlushResponseDebugToStderr(DaemonResponse response)
+    {
+        if (response.Debug is null) return;
+        DebugLog.WriteResponseDebug(response.Debug);
     }
 
     internal static bool TryParseIdleTimeoutMinutes(string? idleTimeout, out int? idleTimeoutMinutes, out ErrorInfo? error)

@@ -1,6 +1,7 @@
 using System.CommandLine;
 using DotnetAICraft.Commands;
 using DotnetAICraft.Daemon;
+using DotnetAICraft.Output;
 using Xunit;
 
 namespace DotnetAICraft.Tests.Commands;
@@ -10,7 +11,7 @@ public class CallersCommandTests
     [Fact]
     public void Build_ExposesDirectionAndDepthOptions()
     {
-        var command = CallersCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption());
+        var command = CallersCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption(), formatOption: BuildFormatOption());
 
         Assert.Equal("callers", command.Name);
         AssertContainsOption(command, "--solution");
@@ -21,7 +22,11 @@ public class CallersCommandTests
         AssertContainsOption(command, "--direction");
         AssertContainsOption(command, "--depth");
         AssertContainsOption(command, "--idle-timeout");
+        AssertContainsOption(command, "--format");
     }
+
+    private static Option<OutputFormat> BuildFormatOption()
+        => new("--format") { DefaultValueFactory = _ => OutputFormat.Text };
 
     [Fact]
     public void Parse_UsesDefaultDirectionAndDepth()

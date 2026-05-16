@@ -1,4 +1,6 @@
+using System.Text.Json;
 using DotnetAICraft.Commands.Shared;
+using DotnetAICraft.Models;
 using DotnetAICraft.Output;
 
 namespace DotnetAICraft.Commands.Diagnostics;
@@ -13,15 +15,16 @@ internal static class Entry
         string? project,
         FileInfo? file,
         string? idleTimeout,
-        string acceptedSeverities)
+        string acceptedSeverities,
+        OutputFormat format = OutputFormat.Text)
     {
         if (!Validation.TryNormalizeSeverity(severity, acceptedSeverities, out var normalizedSeverity, out var severityError))
         {
-            JsonOutput.WriteError(severityError!.Code, severityError.Message, severityError.Details);
+            CommandHelpers.WriteError(format, severityError!.Code, severityError.Message, severityError.Details);
             return;
         }
 
-        var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout);
+        var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout, format);
         if (client is null)
             return;
 
@@ -32,13 +35,23 @@ internal static class Entry
                 severity = normalizedSeverity,
                 project,
                 file = file?.FullName
-            }, idleTimeout);
+            }, idleTimeout, format: format);
 
             if (res is null)
                 return;
 
-            if (!CommandHelpers.TryHandleError(res))
+            if (CommandHelpers.TryHandleError(res, format))
+                return;
+
+            if (format == OutputFormat.Json)
+            {
                 JsonOutput.Write(CommandHelpers.GetDataOrNull(res));
+            }
+            else
+            {
+                var items = JsonOutput.Deserialize<IReadOnlyList<DiagnosticResult>>((JsonElement)res.Result!) ?? Array.Empty<DiagnosticResult>();
+                TextOutput.WriteDiagnostics(items, solutionPath);
+            }
         }
     }
 }

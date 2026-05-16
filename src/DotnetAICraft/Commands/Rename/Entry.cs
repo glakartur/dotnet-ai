@@ -1,4 +1,6 @@
+using System.Text.Json;
 using DotnetAICraft.Commands.Shared;
+using DotnetAICraft.Models;
 using DotnetAICraft.Output;
 
 namespace DotnetAICraft.Commands.Rename;
@@ -15,7 +17,8 @@ internal static class Entry
         string? symbol,
         string to,
         bool dryRun,
-        string? idleTimeout)
+        string? idleTimeout,
+        OutputFormat format = OutputFormat.Text)
     {
         Validation.ValidateCliModeArgs(file, line, col, symbol);
 
@@ -23,20 +26,29 @@ internal static class Entry
             ? (object)new { symbol, to, dryRun }
             : new { file = file!.FullName, line = line!.Value, col = col!.Value, to, dryRun };
 
-        var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout);
+        var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout, format);
         if (client is null)
             return;
 
         await using (client)
         {
-            var res = await CommandHelpers.SendOrWriteValidationErrorAsync(client, CommandName, @params, idleTimeout);
+            var res = await CommandHelpers.SendOrWriteValidationErrorAsync(client, CommandName, @params, idleTimeout, format: format);
             if (res is null)
                 return;
 
-            if (CommandHelpers.TryHandleError(res))
+            if (CommandHelpers.TryHandleError(res, format))
                 return;
 
-            JsonOutput.Write(CommandHelpers.GetDataOrNull(res));
+            if (format == OutputFormat.Json)
+            {
+                JsonOutput.Write(CommandHelpers.GetDataOrNull(res));
+            }
+            else
+            {
+                var rename = JsonOutput.Deserialize<RenameResult>((JsonElement)res.Result!);
+                if (rename is not null)
+                    TextOutput.WriteRename(rename, solutionPath);
+            }
         }
     }
 }

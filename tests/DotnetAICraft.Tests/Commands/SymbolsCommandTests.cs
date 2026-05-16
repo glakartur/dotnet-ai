@@ -1,6 +1,7 @@
 using System.CommandLine;
 using DotnetAICraft.Commands;
 using DotnetAICraft.Daemon;
+using DotnetAICraft.Output;
 using Xunit;
 
 namespace DotnetAICraft.Tests.Commands;
@@ -10,11 +11,12 @@ public class SymbolsCommandTests
     [Fact]
     public void Build_ExposesPaginationOptionsWithDefaultValues()
     {
-        var command = SymbolsCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption());
+        var command = SymbolsCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption(), formatOption: BuildFormatOption());
 
         Assert.Equal("symbols", command.Name);
         AssertContainsOption(command, "--limit");
         AssertContainsOption(command, "--offset");
+        AssertContainsOption(command, "--format");
 
         var parseResult = command.Parse([
             "--solution", "/tmp/sample.sln",
@@ -63,6 +65,9 @@ public class SymbolsCommandTests
 
     private static Option<string?> BuildIdleTimeoutOption()
         => new("--idle-timeout");
+
+    private static Option<OutputFormat> BuildFormatOption()
+        => new("--format") { DefaultValueFactory = _ => OutputFormat.Text };
 
     private static Option<T> GetOption<T>(Command command, string alias)
         => Assert.IsType<Option<T>>(command.Options.Single(opt =>

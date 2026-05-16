@@ -1,5 +1,6 @@
 using System.CommandLine;
 using DotnetAICraft.Commands;
+using DotnetAICraft.Output;
 using Xunit;
 
 namespace DotnetAICraft.Tests.Commands;
@@ -9,7 +10,7 @@ public class UnusedCommandTests
     [Fact]
     public void Build_ExposesExpectedOptionsAndDefaults()
     {
-        var command = UnusedCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption());
+        var command = UnusedCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption(), formatOption: BuildFormatOption());
 
         Assert.Equal("unused", command.Name);
         AssertContainsOption(command, "--solution");
@@ -19,6 +20,7 @@ public class UnusedCommandTests
         AssertContainsOption(command, "--public-only");
         AssertContainsOption(command, "--include-generated");
         AssertContainsOption(command, "--idle-timeout");
+        AssertContainsOption(command, "--format");
 
         var parseResult = command.Parse([
             "--solution", "/tmp/sample.sln"]);
@@ -56,6 +58,9 @@ public class UnusedCommandTests
 
     private static Option<string?> BuildIdleTimeoutOption()
         => new("--idle-timeout");
+
+    private static Option<OutputFormat> BuildFormatOption()
+        => new("--format") { DefaultValueFactory = _ => OutputFormat.Text };
 
     private static Option<T> GetOption<T>(Command command, string alias)
         => Assert.IsType<Option<T>>(command.Options.Single(opt =>

@@ -1,6 +1,7 @@
 using System.CommandLine;
 using DotnetAICraft.Daemon;
 using DotnetAICraft.Commands.Unused;
+using DotnetAICraft.Output;
 
 namespace DotnetAICraft.Commands;
 
@@ -9,7 +10,8 @@ public static class UnusedCommand
     public static Command Build(
         Option<FileInfo> solutionOption,
         Option<string?> idleTimeoutOption,
-        Option<bool>? debugOption = null)
+        Option<bool>? debugOption = null,
+        Option<OutputFormat>? formatOption = null)
     {
         var kindOpt = new Option<string>("--kind")
         {
@@ -44,6 +46,8 @@ public static class UnusedCommand
 
         if (debugOption is not null)
             cmd.Add(debugOption);
+        if (formatOption is not null)
+            cmd.Add(formatOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -53,8 +57,9 @@ public static class UnusedCommand
             var publicOnly = parseResult.GetValue(publicOnlyOpt);
             var includeGenerated = parseResult.GetValue(includeGeneratedOpt);
             var idleTimeout = parseResult.GetValue(idleTimeoutOption);
+            var format = formatOption is null ? OutputFormat.Text : parseResult.GetValue(formatOption);
 
-            await Entry.ExecuteAsync(solution.FullName, kind, project, publicOnly, includeGenerated, idleTimeout);
+            await Entry.ExecuteAsync(solution.FullName, kind, project, publicOnly, includeGenerated, idleTimeout, format);
         });
 
         return cmd;

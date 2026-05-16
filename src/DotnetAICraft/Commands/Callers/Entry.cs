@@ -1,4 +1,6 @@
+using System.Text.Json;
 using DotnetAICraft.Commands.Shared;
+using DotnetAICraft.Models;
 using DotnetAICraft.Output;
 
 namespace DotnetAICraft.Commands.Callers;
@@ -15,19 +17,20 @@ internal static class Entry
         string? symbol,
         string direction,
         int depth,
-        string? idleTimeout)
+        string? idleTimeout,
+        OutputFormat format = OutputFormat.Text)
     {
         Validation.ValidateCliModeArgs(file, line, col, symbol);
 
         if (!Validation.TryNormalizeDirection(direction, out var normalizedDirection, out var directionError))
         {
-            JsonOutput.WriteError(directionError!.Code, directionError.Message, directionError.Details);
+            CommandHelpers.WriteError(format, directionError!.Code, directionError.Message, directionError.Details);
             return;
         }
 
         if (!Validation.TryNormalizeDepth(depth, out var normalizedDepth, out var depthError))
         {
-            JsonOutput.WriteError(depthError!.Code, depthError.Message, depthError.Details);
+            CommandHelpers.WriteError(format, depthError!.Code, depthError.Message, depthError.Details);
             return;
         }
 
@@ -35,20 +38,30 @@ internal static class Entry
             ? (object)new { symbol = symbol.Trim(), direction = normalizedDirection, depth = normalizedDepth }
             : new { file = file!.FullName, line = line!.Value, col = col!.Value, direction = normalizedDirection, depth = normalizedDepth };
 
-        var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout);
+        var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout, format);
         if (client is null)
             return;
 
         await using (client)
         {
-            var res = await CommandHelpers.SendOrWriteValidationErrorAsync(client, CommandName, @params, idleTimeout);
+            var res = await CommandHelpers.SendOrWriteValidationErrorAsync(client, CommandName, @params, idleTimeout, format: format);
             if (res is null)
                 return;
 
-            if (CommandHelpers.TryHandleError(res))
+            if (CommandHelpers.TryHandleError(res, format))
                 return;
 
-            JsonOutput.Write(CommandHelpers.GetDataOrNull(res));
+            if (format == OutputFormat.Json)
+            {
+                JsonOutput.Write(CommandHelpers.GetDataOrNull(res));
+            }
+            else
+            {
+                var target = !string.IsNullOrWhiteSpace(symbol) ? symbol! : $"{file!.FullName}:{line}:{col}";
+                var graph = JsonOutput.Deserialize<CallGraphResult>((JsonElement)res.Result!);
+                if (graph is not null)
+                    TextOutput.WriteCallers(graph, target, solutionPath);
+            }
         }
     }
 }

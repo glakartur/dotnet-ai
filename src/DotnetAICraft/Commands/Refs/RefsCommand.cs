@@ -1,5 +1,6 @@
 using System.CommandLine;
 using DotnetAICraft.Commands.Refs;
+using DotnetAICraft.Output;
 
 namespace DotnetAICraft.Commands;
 
@@ -8,7 +9,8 @@ public static class RefsCommand
     public static Command Build(
         Option<FileInfo> solutionOption,
         Option<string?> idleTimeoutOption,
-        Option<bool>? debugOption = null)
+        Option<bool>? debugOption = null,
+        Option<OutputFormat>? formatOption = null)
     {
         var fileOpt   = new Option<FileInfo?>("--file") { Description = "Source file containing the symbol" };
         var lineOpt   = new Option<int?>("--line") { Description = "1-based line number" };
@@ -22,6 +24,8 @@ public static class RefsCommand
 
         if (debugOption is not null)
             cmd.Add(debugOption);
+        if (formatOption is not null)
+            cmd.Add(formatOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -31,8 +35,9 @@ public static class RefsCommand
             var col = parseResult.GetValue(colOpt);
             var symbol = parseResult.GetValue(symbolOpt);
             var idleTimeout = parseResult.GetValue(idleTimeoutOption);
+            var format = formatOption is null ? OutputFormat.Text : parseResult.GetValue(formatOption);
 
-            await Entry.ExecuteAsync(solution.FullName, file, line, col, symbol, idleTimeout);
+            await Entry.ExecuteAsync(solution.FullName, file, line, col, symbol, idleTimeout, format);
         });
 
         return cmd;

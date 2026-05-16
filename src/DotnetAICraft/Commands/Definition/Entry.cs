@@ -1,4 +1,6 @@
+using System.Text.Json;
 using DotnetAICraft.Commands.Shared;
+using DotnetAICraft.Models;
 using DotnetAICraft.Output;
 
 namespace DotnetAICraft.Commands.Definition;
@@ -13,7 +15,8 @@ internal static class Entry
         int? line,
         int? col,
         string? symbol,
-        string? idleTimeout)
+        string? idleTimeout,
+        OutputFormat format = OutputFormat.Text)
     {
         Validation.ValidateCliArgs(file, line, col, symbol);
 
@@ -21,20 +24,29 @@ internal static class Entry
             ? (object)new { symbol = symbol.Trim() }
             : new { file = file!.FullName, line = line!.Value, col = col!.Value };
 
-        var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout);
+        var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout, format);
         if (client is null)
             return;
 
         await using (client)
         {
-            var res = await CommandHelpers.SendOrWriteValidationErrorAsync(client, CommandName, @params, idleTimeout);
+            var res = await CommandHelpers.SendOrWriteValidationErrorAsync(client, CommandName, @params, idleTimeout, format: format);
             if (res is null)
                 return;
 
-            if (CommandHelpers.TryHandleError(res))
+            if (CommandHelpers.TryHandleError(res, format))
                 return;
 
-            JsonOutput.Write(CommandHelpers.GetDataOrNull(res));
+            if (format == OutputFormat.Json)
+            {
+                JsonOutput.Write(CommandHelpers.GetDataOrNull(res));
+            }
+            else
+            {
+                var def = JsonOutput.Deserialize<DefinitionResult>((JsonElement)res.Result!);
+                if (def is not null)
+                    TextOutput.WriteDefinition(def, solutionPath);
+            }
         }
     }
 }

@@ -74,7 +74,7 @@ public class JsonOutputTests
     public void Serialize_ProducesCamelCaseJson()
     {
         var obj    = new { MyProperty = "value", AnotherProp = 42 };
-        var json   = Output.JsonOutput.Serialize(obj);
+        var json   = DotnetAICraft.Output.JsonOutput.Serialize(obj);
 
         Assert.Contains("myProperty", json);
         Assert.Contains("anotherProp", json);
@@ -84,8 +84,8 @@ public class JsonOutputTests
     public void RoundTrip_WorksForDictionary()
     {
         var dict = new Dictionary<string, object?> { ["key"] = "value", ["num"] = 42 };
-        var json = Output.JsonOutput.Serialize(dict);
-        var back = Output.JsonOutput.Deserialize<Dictionary<string, object?>>(json);
+        var json = DotnetAICraft.Output.JsonOutput.Serialize(dict);
+        var back = DotnetAICraft.Output.JsonOutput.Deserialize<Dictionary<string, object?>>(json);
 
         Assert.NotNull(back);
         Assert.Equal("value", back["key"]?.ToString());

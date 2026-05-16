@@ -1,6 +1,7 @@
-﻿using System.CommandLine;
+using System.CommandLine;
 using DotnetAICraft.Daemon;
 using DotnetAICraft.Commands.Symbols;
+using DotnetAICraft.Output;
 
 namespace DotnetAICraft.Commands;
 
@@ -9,7 +10,8 @@ public static class SymbolsCommand
     public static Command Build(
         Option<FileInfo> solutionOption,
         Option<string?> idleTimeoutOption,
-        Option<bool>? debugOption = null)
+        Option<bool>? debugOption = null,
+        Option<OutputFormat>? formatOption = null)
     {
         var patternOpt = new Option<string>("--pattern")
         {
@@ -42,6 +44,8 @@ public static class SymbolsCommand
 
         if (debugOption is not null)
             cmd.Add(debugOption);
+        if (formatOption is not null)
+            cmd.Add(formatOption);
 
         cmd.SetAction(async parseResult =>
         {
@@ -51,8 +55,9 @@ public static class SymbolsCommand
             var limit = parseResult.GetRequiredValue(limitOpt);
             var offset = parseResult.GetRequiredValue(offsetOpt);
             var idleTimeout = parseResult.GetValue(idleTimeoutOption);
+            var format = formatOption is null ? OutputFormat.Text : parseResult.GetValue(formatOption);
 
-            await Entry.ExecuteAsync(solution.FullName, pattern, kind, limit, offset, idleTimeout);
+            await Entry.ExecuteAsync(solution.FullName, pattern, kind, limit, offset, idleTimeout, format);
         });
 
         return cmd;

@@ -1,5 +1,6 @@
 using System.CommandLine;
 using DotnetAICraft.Commands;
+using DotnetAICraft.Output;
 using Xunit;
 
 namespace DotnetAICraft.Tests.Commands;
@@ -9,7 +10,7 @@ public class RenameCommandTests
     [Fact]
     public void Build_ExposesExpectedOptionsAndAliases()
     {
-        var command = RenameCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption());
+        var command = RenameCommand.Build(BuildSolutionOption(), BuildIdleTimeoutOption(), formatOption: BuildFormatOption());
 
         Assert.Equal("rename", command.Name);
         AssertContainsOption(command, "--solution");
@@ -21,7 +22,11 @@ public class RenameCommandTests
         AssertContainsOption(command, "--to");
         AssertContainsOption(command, "--dry-run");
         AssertContainsOption(command, "--idle-timeout");
+        AssertContainsOption(command, "--format");
     }
+
+    private static Option<OutputFormat> BuildFormatOption()
+        => new("--format") { DefaultValueFactory = _ => OutputFormat.Text };
 
     [Fact]
     public void Build_ToOption_IsRequired()

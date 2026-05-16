@@ -14,7 +14,7 @@ public class ServerStartEnsureRunningTests
         string output;
         using (var capture = ConsoleOutputCapture.Start())
         {
-            await ServerEntry.StartAsync(CreateUniqueSolutionPath(), idleTimeout: "garbage");
+            await ServerEntry.StartAsync(CreateUniqueSolutionPath(), idleTimeout: "garbage", format: DotnetAICraft.Output.OutputFormat.Json);
             output = capture.GetOutput();
         }
 
