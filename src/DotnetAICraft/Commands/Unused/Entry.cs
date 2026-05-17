@@ -44,12 +44,14 @@ internal static class Entry
             if (CommandHelpers.TryHandleError(res, format))
                 return;
 
+            var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
             if (format == OutputFormat.Json)
             {
-                JsonOutput.Write(CommandHelpers.GetDataOrNull(res));
+                JsonOutput.WriteWithSolutionRoot(solutionDir, CommandHelpers.GetDataOrNull(res));
             }
             else
             {
+                TextOutput.WriteSolutionRootHeader(solutionDir);
                 var summary = JsonOutput.Deserialize<UnusedScanSummary>((JsonElement)res.Result!);
                 if (summary is not null)
                     TextOutput.WriteUnused(summary, solutionPath);

@@ -6,7 +6,7 @@ namespace DotnetAICraft.Commands.Definition;
 
 internal static class OutputMapping
 {
-    internal static DefinitionResult Map(ISymbol symbol)
+    internal static DefinitionResult Map(ISymbol symbol, string solutionDir)
     {
         var sourceLocation = symbol.Locations.FirstOrDefault(location => location.IsInSource);
 
@@ -16,7 +16,7 @@ internal static class OutputMapping
 
         if (sourceLocation is not null)
         {
-            var sourcePosition = sourceLocation.GetFileLineCol();
+            var sourcePosition = sourceLocation.GetFileLineColRelative(solutionDir);
             file = sourcePosition.File;
             line = sourcePosition.Line;
             col = sourcePosition.Col;

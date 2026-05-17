@@ -51,12 +51,14 @@ internal static class Entry
             if (CommandHelpers.TryHandleError(res, format))
                 return;
 
+            var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
             if (format == OutputFormat.Json)
             {
-                JsonOutput.Write(CommandHelpers.GetDataOrNull(res));
+                JsonOutput.WriteWithSolutionRoot(solutionDir, CommandHelpers.GetDataOrNull(res));
             }
             else
             {
+                TextOutput.WriteSolutionRootHeader(solutionDir);
                 var target = !string.IsNullOrWhiteSpace(symbol) ? symbol! : $"{file!.FullName}:{line}:{col}";
                 var graph = JsonOutput.Deserialize<CallGraphResult>((JsonElement)res.Result!);
                 if (graph is not null)

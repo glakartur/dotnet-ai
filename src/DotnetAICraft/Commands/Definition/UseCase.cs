@@ -23,6 +23,7 @@ internal static class UseCase
             ? await SymbolResolver.FromFullNameAsync(solution, symbol!.Trim(), ct)
             : await SymbolResolver.FromLocationAsync(solution, file!, line!.Value, col!.Value, ct);
 
-        return OutputMapping.Map(resolved);
+        var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
+        return OutputMapping.Map(resolved, solutionDir);
     }
 }

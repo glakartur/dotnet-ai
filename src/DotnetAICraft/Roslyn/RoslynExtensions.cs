@@ -39,6 +39,16 @@ public static class RoslynExtensions
         );
     }
 
+    /// <summary>
+    /// Returns the location's path relative to <paramref name="solutionDir"/> with forward-slash
+    /// separators (per <see cref="PathFormatter.ToRelative"/>), plus 1-based line/col.
+    /// </summary>
+    public static (string File, int Line, int Col) GetFileLineColRelative(this Location location, string solutionDir)
+    {
+        var (file, line, col) = location.GetFileLineCol();
+        return (PathFormatter.ToRelative(file, solutionDir) ?? "", line, col);
+    }
+
     public static string GetContextLine(this Location location)
     {
         if (!location.IsInSource) return "";

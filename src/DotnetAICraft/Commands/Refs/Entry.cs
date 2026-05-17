@@ -37,12 +37,14 @@ internal static class Entry
             if (CommandHelpers.TryHandleError(res, format))
                 return;
 
+            var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
             if (format == OutputFormat.Json)
             {
-                JsonOutput.Write(CommandHelpers.GetDataOrNull(res));
+                JsonOutput.WriteWithSolutionRoot(solutionDir, CommandHelpers.GetDataOrNull(res));
             }
             else
             {
+                TextOutput.WriteSolutionRootHeader(solutionDir);
                 var target = symbol ?? $"{file!.FullName}:{line}:{col}";
                 var items = JsonOutput.Deserialize<IReadOnlyList<ReferenceResult>>((JsonElement)res.Result!) ?? Array.Empty<ReferenceResult>();
                 TextOutput.WriteRefs(items, target, solutionPath);

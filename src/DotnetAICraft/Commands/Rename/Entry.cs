@@ -41,7 +41,8 @@ internal static class Entry
 
             if (format == OutputFormat.Json)
             {
-                JsonOutput.Write(CommandHelpers.GetDataOrNull(res));
+                var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
+                JsonOutput.WriteWithSolutionRoot(solutionDir, CommandHelpers.GetDataOrNull(res));
             }
             else
             {

@@ -12,6 +12,13 @@ public static class TextOutput
     private static string Pluralize(int count, string singular, string plural)
         => count == 1 ? singular : plural;
 
+    // ── Envelope header ──────────────────────────────────────────────────────
+    public static void WriteSolutionRootHeader(string absoluteSolutionDir)
+    {
+        Console.Out.WriteLine($"SolutionRoot: {absoluteSolutionDir}");
+        Console.Out.WriteLine();
+    }
+
     // ── Refs ─────────────────────────────────────────────────────────────────
     public static void WriteRefs(IReadOnlyList<ReferenceResult> items, string target, string solution)
     {

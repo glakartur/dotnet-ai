@@ -6,10 +6,12 @@ namespace DotnetAICraft.Commands.Impls;
 
 internal static class OutputMapping
 {
-    internal static SymbolResult Map(ISymbol symbol)
+    internal static SymbolResult Map(ISymbol symbol, string solutionDir)
     {
         var location = symbol.Locations.FirstOrDefault(l => l.IsInSource);
-        var (file, line, col) = location is not null ? location.GetFileLineCol() : ("", 0, 0);
+        var (file, line, col) = location is not null
+            ? location.GetFileLineColRelative(solutionDir)
+            : ("", 0, 0);
 
         return new SymbolResult(
             Name: symbol.Name,

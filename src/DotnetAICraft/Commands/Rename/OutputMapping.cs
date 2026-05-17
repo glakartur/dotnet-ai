@@ -1,4 +1,5 @@
 using DotnetAICraft.Models;
+using DotnetAICraft.Roslyn;
 using Microsoft.CodeAnalysis;
 
 namespace DotnetAICraft.Commands.Rename;
@@ -15,6 +16,7 @@ internal static class OutputMapping
     {
         var solutionChanges = newSolution.GetChanges(oldSolution);
         var changes = new List<RenameChange>();
+        var solutionDir = Path.GetDirectoryName(oldSolution.FilePath) ?? string.Empty;
 
         foreach (var projectChanges in solutionChanges.GetProjectChanges())
         foreach (var docChange in projectChanges.GetChangedDocuments())
@@ -30,7 +32,7 @@ internal static class OutputMapping
                 var oldTextSegment = oldText.GetSubText(change.Span).ToString();
 
                 changes.Add(new RenameChange(
-                    File: oldDoc.FilePath ?? string.Empty,
+                    File: PathFormatter.ToRelative(oldDoc.FilePath, solutionDir) ?? string.Empty,
                     Line: linePos.Line + 1,
                     Col: linePos.Character + 1,
                     OldText: oldTextSegment,

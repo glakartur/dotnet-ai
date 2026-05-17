@@ -20,10 +20,11 @@ internal static class UseCase
             : await SymbolResolver.FromLocationAsync(solution, file!, line!.Value, col!.Value, ct);
 
         var refs = await SymbolFinder.FindReferencesAsync(resolved, solution, ct);
+        var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
 
         return refs
             .SelectMany(reference => reference.Locations)
-            .Select(OutputMapping.Map)
+            .Select(loc => OutputMapping.Map(loc, solutionDir))
             .ToList();
     }
 }

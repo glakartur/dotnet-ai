@@ -58,12 +58,17 @@ internal static class Entry
                 return;
 
             DebugLog.Write("symbols", "ExecuteAsync writing output to stdout");
+            var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
             if (format == OutputFormat.Json)
             {
-                JsonOutput.Write(CommandHelpers.GetDataOrNull(res));
+                var items = JsonOutput.Deserialize<IReadOnlyList<SymbolResult>>((JsonElement)res.Result!)
+                    ?? Array.Empty<SymbolResult>();
+                var hasMore = res.Page?.HasMore ?? false;
+                JsonOutput.WriteWithSolutionRoot(solutionDir, new SymbolsResultPage(items, hasMore));
             }
             else
             {
+                TextOutput.WriteSolutionRootHeader(solutionDir);
                 var items = JsonOutput.Deserialize<IReadOnlyList<SymbolResult>>((JsonElement)res.Result!)
                     ?? Array.Empty<SymbolResult>();
                 var hasMore = res.Page?.HasMore ?? false;

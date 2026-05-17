@@ -3,6 +3,18 @@
 ## [Unreleased]
 
 ### Changed
+- **Breaking (output format):** File paths in command results are now emitted
+  relative to the solution directory with forward-slash separators on all
+  platforms. The absolute solution root is surfaced once per response: as a
+  `SolutionRoot: <abs path>` header line in `--format text`, and as a top-level
+  `solutionRoot` field in `--format json`. Affects `refs`, `impls`, `callers`,
+  `symbols`, `diagnostics`, `definition`, `unused`, and `rename`. For commands
+  whose JSON result was previously a top-level array (`refs`, `impls`,
+  `diagnostics`), the array is now nested under `items` inside the envelope
+  object. `rename` text output omits the `SolutionRoot:` header — its existing
+  summary line stays as-is. Out-of-tree paths (different volume, generator
+  output outside the solution tree) fall back to their absolute form with
+  forward-slash normalization.
 - `dotnet aicraft server start` is now a fast, idempotent ensure-running call.
   It no longer runs the daemon foreground process: instead it attaches to a
   running daemon (extending the idle deadline) or spawns one in the background

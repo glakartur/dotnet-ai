@@ -19,6 +19,7 @@ internal static class UseCase
             ? await SymbolFinder.FindImplementationsAsync(namedType, solution, transitive: false, projects: null, ct)
             : await SymbolFinder.FindImplementationsAsync(resolved, solution, projects: null, ct);
 
-        return impls.Select(OutputMapping.Map).ToList();
+        var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
+        return impls.Select(s => OutputMapping.Map(s, solutionDir)).ToList();
     }
 }

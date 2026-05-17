@@ -342,12 +342,13 @@ public sealed class DaemonServer : IAsyncDisposable
                 GetRequiredInt(p, "col"), ct);
 
         var refs = await SymbolFinder.FindReferencesAsync(symbol, solution, ct);
+        var solutionDir = GetSolutionDir(solution);
 
         return refs
             .SelectMany(r => r.Locations)
             .Select(loc =>
             {
-                var (file, line, col) = loc.Location.GetFileLineCol();
+                var (file, line, col) = loc.Location.GetFileLineColRelative(solutionDir);
                 return new Models.ReferenceResult(file, line, col,
                     loc.Location.GetContextLine());
             })
@@ -796,6 +797,9 @@ public sealed class DaemonServer : IAsyncDisposable
             }));
     }
 
+    private static string GetSolutionDir(Solution solution)
+        => Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
+
     // ── File watching ─────────────────────────────────────────────────────────
 
     private void StartFileWatcher()
@@ -1031,12 +1035,13 @@ public sealed class DaemonServer : IAsyncDisposable
         CancellationToken ct = default)
     {
         var callers = await SymbolFinder.FindCallersAsync(symbol, solution, ct);
+        var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
 
         return callers.Select(c =>
         {
             var loc = c.Locations.FirstOrDefault();
             var (file, line, col) = loc is not null
-                ? loc.GetFileLineCol()
+                ? loc.GetFileLineColRelative(solutionDir)
                 : ("", 0, 0);
 
             return new Models.CallerResult(
@@ -1073,7 +1078,8 @@ public sealed class DaemonServer : IAsyncDisposable
         int depth,
         CancellationToken ct)
     {
-        var rootNode = CreateCallGraphNode(rootSymbol);
+        var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
+        var rootNode = CreateCallGraphNode(rootSymbol, solutionDir);
         var nodes = new Dictionary<string, Models.CallGraphNode>(StringComparer.Ordinal)
         {
             [rootNode.Id] = rootNode
@@ -1092,7 +1098,7 @@ public sealed class DaemonServer : IAsyncDisposable
             ct.ThrowIfCancellationRequested();
 
             var (currentSymbol, currentDepth) = queue.Dequeue();
-            var currentNode = CreateCallGraphNode(currentSymbol);
+            var currentNode = CreateCallGraphNode(currentSymbol, solutionDir);
             nodes[currentNode.Id] = currentNode;
 
             if (currentDepth >= depth)
@@ -1107,7 +1113,7 @@ public sealed class DaemonServer : IAsyncDisposable
 
                 foreach (var callerInfo in incomingCallers)
                 {
-                    var callerNode = CreateCallGraphNode(callerInfo.CallingSymbol);
+                    var callerNode = CreateCallGraphNode(callerInfo.CallingSymbol, solutionDir);
                     nodes[callerNode.Id] = callerNode;
 
                     AddEdge(callerNode.Id, currentNode.Id, "incoming", callerInfo.IsDirect);
@@ -1121,7 +1127,7 @@ public sealed class DaemonServer : IAsyncDisposable
 
                 foreach (var callee in outgoingCallees)
                 {
-                    var calleeNode = CreateCallGraphNode(callee);
+                    var calleeNode = CreateCallGraphNode(callee, solutionDir);
                     nodes[calleeNode.Id] = calleeNode;
 
                     AddEdge(currentNode.Id, calleeNode.Id, "outgoing", true);
@@ -1199,11 +1205,11 @@ public sealed class DaemonServer : IAsyncDisposable
         return callees;
     }
 
-    private static Models.CallGraphNode CreateCallGraphNode(ISymbol symbol)
+    private static Models.CallGraphNode CreateCallGraphNode(ISymbol symbol, string solutionDir)
     {
         var sourceLocation = symbol.Locations.FirstOrDefault(location => location.IsInSource);
         var (file, line, col) = sourceLocation is not null
-            ? sourceLocation.GetFileLineCol()
+            ? sourceLocation.GetFileLineColRelative(solutionDir)
             : ("", 0, 0);
 
         return new Models.CallGraphNode(
@@ -1418,6 +1424,7 @@ public sealed class DaemonServer : IAsyncDisposable
         var results = new List<Models.SymbolResult>(normalizedLimit);
         var skipped = 0;
         var hasMore = false;
+        var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
 
         await foreach (var symbol in SymbolResolver.SearchAsync(solution, pattern, filter, ct))
         {
@@ -1434,7 +1441,7 @@ public sealed class DaemonServer : IAsyncDisposable
 
                 if (results.Count < normalizedLimit)
                 {
-                    results.Add(SymbolToResult(candidate));
+                    results.Add(SymbolToResult(candidate, solutionDir));
                     continue;
                 }
 
@@ -1467,6 +1474,7 @@ public sealed class DaemonServer : IAsyncDisposable
         var scanned = 0;
         var results = new List<Models.UnusedCandidateResult>();
         var seenSymbols = new HashSet<string>(StringComparer.Ordinal);
+        var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
 
         await foreach (var symbol in SymbolResolver.SearchAsync(solution, "*", definition.Filter, ct))
         {
@@ -1487,7 +1495,7 @@ public sealed class DaemonServer : IAsyncDisposable
                 if (ShouldExcludeUnusedByHeuristics(candidate))
                     continue;
 
-                var sourceLocation = await GetPrimarySourceLocationAsync(candidate, solution, ct);
+                var sourceLocation = await GetPrimarySourceLocationAsync(candidate, solution, solutionDir, ct);
                 if (sourceLocation is null)
                     continue;
 
@@ -1556,6 +1564,7 @@ public sealed class DaemonServer : IAsyncDisposable
             : fileFilter.Trim();
 
         var results = new List<Models.DiagnosticResult>();
+        var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
 
         foreach (var project in solution.Projects)
         {
@@ -1576,11 +1585,13 @@ public sealed class DaemonServer : IAsyncDisposable
                 if (severityFilter is not null && diagnostic.Severity != severityFilter.Value)
                     continue;
 
-                var mapped = MapDiagnostic(project.Name, diagnostic);
-                if (!MatchesFileFilter(mapped.File, normalizedFile))
+                var absolutePath = diagnostic.Location is { IsInSource: true } location
+                    ? location.GetLineSpan().Path
+                    : null;
+                if (!MatchesFileFilter(absolutePath, normalizedFile))
                     continue;
 
-                results.Add(mapped);
+                results.Add(MapDiagnostic(project.Name, diagnostic, solutionDir));
             }
         }
 
@@ -1593,7 +1604,7 @@ public sealed class DaemonServer : IAsyncDisposable
             .ToList();
     }
 
-    private static Models.DiagnosticResult MapDiagnostic(string projectName, Diagnostic diagnostic)
+    private static Models.DiagnosticResult MapDiagnostic(string projectName, Diagnostic diagnostic, string solutionDir)
     {
         string? file = null;
         int? line = null;
@@ -1604,7 +1615,7 @@ public sealed class DaemonServer : IAsyncDisposable
         if (diagnostic.Location is { IsInSource: true } location)
         {
             var lineSpan = location.GetLineSpan();
-            file = lineSpan.Path;
+            file = PathFormatter.ToRelative(lineSpan.Path, solutionDir);
             line = lineSpan.StartLinePosition.Line + 1;
             col = lineSpan.StartLinePosition.Character + 1;
             endLine = lineSpan.EndLinePosition.Line + 1;
@@ -1800,6 +1811,7 @@ public sealed class DaemonServer : IAsyncDisposable
     private static async Task<SourceSymbolLocation?> GetPrimarySourceLocationAsync(
         ISymbol symbol,
         Solution solution,
+        string solutionDir,
         CancellationToken ct)
     {
         var sourceLocation = symbol.Locations.FirstOrDefault(location => location.IsInSource);
@@ -1834,7 +1846,8 @@ public sealed class DaemonServer : IAsyncDisposable
         if (!generated && document is not null)
             generated = await ContainsAutoGeneratedMarkerAsync(document, ct);
 
-        return new SourceSymbolLocation(file, line, col, project, generated);
+        var relativeFile = PathFormatter.ToRelative(file, solutionDir) ?? string.Empty;
+        return new SourceSymbolLocation(relativeFile, line, col, project, generated);
     }
 
     private static bool IsGeneratedFilePath(string filePath)
@@ -1907,10 +1920,10 @@ public sealed class DaemonServer : IAsyncDisposable
         return (reason, confidence);
     }
 
-    private static Models.SymbolResult SymbolToResult(ISymbol symbol)
+    private static Models.SymbolResult SymbolToResult(ISymbol symbol, string solutionDir)
     {
         var loc  = symbol.Locations.FirstOrDefault(l => l.IsInSource);
-        var (file, line, col) = loc is not null ? loc.GetFileLineCol() : ("", 0, 0);
+        var (file, line, col) = loc is not null ? loc.GetFileLineColRelative(solutionDir) : ("", 0, 0);
 
         return new Models.SymbolResult(
             Name:                symbol.Name,

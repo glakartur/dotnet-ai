@@ -59,21 +59,28 @@ dotnet aicraft refs --solution App.sln --symbol "MyApp.Services.OrderService.Pro
 ```
 
 ```json
-[
-  {
-    "file": "/src/Controllers/OrderController.cs",
-    "line": 87,
-    "col": 9,
-    "context": "_orderService.ProcessOrder(dto.ToRequest());"
-  },
-  {
-    "file": "/tests/OrderServiceTests.cs",
-    "line": 34,
-    "col": 22,
-    "context": "var result = await _sut.ProcessOrder(request);"
-  }
-]
+{
+  "solutionRoot": "/home/me/App",
+  "items": [
+    {
+      "file": "src/Controllers/OrderController.cs",
+      "line": 87,
+      "col": 9,
+      "context": "_orderService.ProcessOrder(dto.ToRequest());"
+    },
+    {
+      "file": "tests/OrderServiceTests.cs",
+      "line": 34,
+      "col": 22,
+      "context": "var result = await _sut.ProcessOrder(request);"
+    }
+  ]
+}
 ```
+
+File paths are emitted relative to the solution directory with forward-slash
+separators; the absolute root is surfaced once via `solutionRoot` (JSON) or a
+`SolutionRoot: <abs path>` header line in text format.
 
 ### Find declaration/definition of a symbol
 
@@ -89,9 +96,10 @@ dotnet aicraft definition --solution App.sln --symbol "MyApp.Services.OrderServi
 
 ```json
 {
+  "solutionRoot": "/home/me/App",
   "fullName": "MyApp.Services.OrderService.ProcessOrder(MyApp.Contracts.OrderRequest)",
   "kind": "method",
-  "file": "/src/Services/OrderService.cs",
+  "file": "src/Services/OrderService.cs",
   "line": 42,
   "col": 18,
   "containingType": "MyApp.Services.OrderService",
@@ -171,12 +179,13 @@ dotnet aicraft symbols --solution App.sln --pattern "*" --kind all --limit 100 -
 
 ```json
 {
+  "solutionRoot": "/home/me/App",
   "items": [
     {
       "name": "ProcessOrder",
       "fullName": "MyApp.Services.OrderService.ProcessOrder(MyApp.Contracts.OrderRequest)",
       "kind": "method",
-      "file": "/src/Services/OrderService.cs",
+      "file": "src/Services/OrderService.cs",
       "line": 42,
       "col": 18,
       "containingType": "MyApp.Services.OrderService",
