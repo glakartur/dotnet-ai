@@ -41,6 +41,7 @@ Every command accepts these shared options:
 | Option | Description |
 |---|---|
 | `--solution` / `-s` | Path to `.sln` or `.csproj` file (required) |
+| `--format` | Output format: `text` (default, compiler/ripgrep-style — optimized for LLMs) or `json` (pretty-printed, stable schema for scripts) |
 | `--idle-timeout` | Session-scoped daemon idle timeout: `off` or a positive duration like `5m`, `1h` (default 60m) |
 | `--debug` | Enable verbose debug logging to stderr |
 
@@ -325,8 +326,12 @@ $ dotnet aicraft callers --solution App.sln --file Foo.cs --line 10 --col 5
 | `dotnet aicraft server stop` | Stop daemon |
 | `dotnet aicraft server start` | Ensure daemon is running and set / extend the session idle timeout (returns promptly) |
 
-All commands output **JSON to stdout**. Daemon logs go to **stderr** so they
-don't interfere with JSON parsing.
+Commands output a **compiler/ripgrep-style text format on stdout by default** —
+optimized for LLM consumption (`file:line:col: context` lines for location lists,
+MSBuild-style severity prefixes for diagnostics). Use `--format json` for the
+stable, pretty-printed JSON schema intended for scripting. Daemon logs and
+`--debug` output go to **stderr**, and any debug output is flushed **before**
+the stdout result so result parsing stays clean.
 
 ---
 

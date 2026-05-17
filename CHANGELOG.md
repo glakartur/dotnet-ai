@@ -2,7 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+- `--format <text|json>` option on every command. `text` is the new default and
+  uses a compiler/ripgrep-style hybrid (`file:line:col: context` for location
+  lists; MSBuild-style `severity file:line:col [CODE]: message` for
+  `diagnostics`; a rich block layout for `definition`). It is optimized for LLM
+  consumption — significantly cheaper in tokens than pretty-printed JSON for
+  the dominant list shape. `--format json` preserves the existing
+  pretty-printed JSON schema 1:1 for scripting use.
+- Hard ordering guarantee for `--debug` output: debug lines from the daemon
+  are flushed to stderr **before** the stdout result, so result parsing is
+  never interleaved with debug noise.
+
 ### Changed
+- **Breaking (default stdout):** The default stdout format changed from
+  pretty-printed JSON to the new `text` format described above. Scripts that
+  parsed stdout as JSON must now pass `--format json` explicitly. The JSON
+  schema itself is unchanged.
 - **Breaking (output format):** File paths in command results are now emitted
   relative to the solution directory with forward-slash separators on all
   platforms. The absolute solution root is surfaced once per response: as a

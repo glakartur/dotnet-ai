@@ -10,14 +10,32 @@ description: >
   "find implementations", "find callers", "find definition", "search symbols", "diagnostics",
   "unused code", or "check daemon status".
   Prefer `dotnet aicraft` over grep/text-search for any symbol-level question in a .NET project.
-version: 0.4.0
+version: 0.5.0
 ---
 
 # dotnet-aicraft
 
 Semantic .NET code analysis via Roslyn — compiler-level precision, not text search. A background daemon loads the solution once; subsequent commands respond in ~50ms. Auto-starts on first use, shuts down after 60 min idle.
 
-All commands output **JSON to stdout**. Daemon startup messages go to **stderr**.
+## Output Format
+
+Commands emit a **compiler/ripgrep-style text format on stdout by default** —
+optimized for LLM consumption. Pass `--format json` to get the stable pretty-printed
+JSON schema (use this when scripting or when you need machine-parsable fields).
+Daemon logs and `--debug` output always go to **stderr**, and debug output is
+flushed **before** the stdout result so result parsing is never interleaved.
+
+File paths in results are **relative to the solution directory**, with
+forward-slash separators on all platforms. The absolute solution root is
+surfaced once per response:
+- In `--format text`: a `SolutionRoot: <abs path>` header line.
+- In `--format json`: a top-level `solutionRoot` field on the envelope.
+
+For list-shaped results (`refs`, `impls`, `callers`, `symbols`, `diagnostics`,
+`unused`) the JSON envelope is `{ "solutionRoot": "...", "items": [...] }` — the
+list lives under `items`, not as a top-level array. Out-of-tree paths (different
+volume, generator output) fall back to their absolute form with forward-slash
+normalization.
 
 ## When to Use Proactively
 
@@ -38,6 +56,7 @@ All commands output **JSON to stdout**. Daemon startup messages go to **stderr**
 
 ```bash
 --solution / -s   # Path to .sln or .csproj (required)
+--format          # text (default, LLM-optimized) | json (stable schema for scripting)
 --idle-timeout    # "off" or duration like "5m", "1h" (default 60m, session-scoped)
 --debug           # Verbose debug logging to stderr (also: DOTNET_AICRAFT_DEBUG=1)
 ```
@@ -61,7 +80,15 @@ dotnet aicraft refs -s App.sln --file src/Services/OrderService.cs --line 42 --c
 dotnet aicraft refs -s App.sln --symbol "MyApp.Services.OrderService.ProcessOrder"
 ```
 
-Output: `[{ file, line, col, context }]`
+Output (`--format json`): `{ solutionRoot, items: [{ file, line, col, context }] }`
+Output (`--format text`, default):
+```
+12 references to MyApp.Services.OrderService.ProcessOrder in App.sln
+SolutionRoot: /abs/path/to/repo
+
+src/Controllers/OrderController.cs:87:9: _orderService.ProcessOrder(...);
+...
+```
 
 ### rename — Safe Rename
 
