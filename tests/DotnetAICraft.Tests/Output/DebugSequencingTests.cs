@@ -163,9 +163,9 @@ public class DebugSequencingTests
 
         DebugLog.WriteResponseDebug(new[] { "first\nstill-first" });
 
+        // One Console.Error.WriteLine call ⇒ exactly one Environment.NewLine appended.
+        // Embedded \n in the input must be emitted verbatim, not split into separate WriteLine calls.
         var raw = errCap.GetOutput();
-        Assert.Contains("first\nstill-first", raw);
-        var emittedLines = raw.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
-        Assert.Single(emittedLines);
+        Assert.Equal("first\nstill-first" + Environment.NewLine, raw);
     }
 }
