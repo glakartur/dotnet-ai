@@ -101,7 +101,34 @@ internal static class CommandHelpers
     internal static void FlushResponseDebugToStderr(DaemonResponse response)
     {
         if (response.Debug is null) return;
-        DebugLog.WriteResponseDebug(response.Debug);
+
+        var lines = ExtractDebugLines(response.Debug);
+        if (lines.Length == 0) return;
+
+        DebugLog.WriteResponseDebug(lines);
+    }
+
+    private static string[] ExtractDebugLines(object payload)
+    {
+        if (payload is string[] arr)
+            return arr;
+
+        if (payload is IEnumerable<string> seq)
+            return seq.ToArray();
+
+        if (payload is System.Text.Json.JsonElement element
+            && element.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            var list = new List<string>(element.GetArrayLength());
+            foreach (var item in element.EnumerateArray())
+            {
+                if (item.ValueKind == System.Text.Json.JsonValueKind.String)
+                    list.Add(item.GetString() ?? string.Empty);
+            }
+            return list.ToArray();
+        }
+
+        return Array.Empty<string>();
     }
 
     internal static bool TryParseIdleTimeoutMinutes(string? idleTimeout, out int? idleTimeoutMinutes, out ErrorInfo? error)

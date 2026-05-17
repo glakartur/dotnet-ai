@@ -225,10 +225,12 @@ public sealed class DaemonServer : IAsyncDisposable
         }
     }
 
-    private async Task<DaemonResponse> DispatchAsync(DaemonRequest req, CancellationToken ct)
+    internal async Task<DaemonResponse> DispatchAsync(DaemonRequest req, CancellationToken ct)
     {
+        using var debugScope = req.Debug == true ? DebugLog.BeginCapture() : null;
         DebugLog.Write("server", $"DispatchAsync begin command={req.Command} id={req.Id}");
         var sw = System.Diagnostics.Stopwatch.StartNew();
+        DaemonResponse response;
         try
         {
             object? result = req.Command switch
@@ -250,7 +252,7 @@ public sealed class DaemonServer : IAsyncDisposable
 
             if (req.Command == "symbols" && result is Models.SymbolsResultPage symbolsPage)
             {
-                return CreateSuccessResponse(
+                response = CreateSuccessResponse(
                     req.Id,
                     symbolsPage.Items,
                     new Models.PageResponse(
@@ -259,22 +261,24 @@ public sealed class DaemonServer : IAsyncDisposable
                         HasMore: symbolsPage.HasMore),
                     new ResponseMeta(sw.ElapsedMilliseconds, _loadedAt));
             }
-
-            return CreateSuccessResponse(
-                req.Id,
-                result,
-                new ResponseMeta(sw.ElapsedMilliseconds, _loadedAt));
+            else
+            {
+                response = CreateSuccessResponse(
+                    req.Id,
+                    result,
+                    new ResponseMeta(sw.ElapsedMilliseconds, _loadedAt));
+            }
         }
         catch (DaemonValidationException ex)
         {
-            return CreateProblemResponse(
+            response = CreateProblemResponse(
                 req.Id,
                 ex.Error,
                 new ResponseMeta(sw.ElapsedMilliseconds, _loadedAt));
         }
         catch (ArgumentException ex)
         {
-            return CreateProblemResponse(
+            response = CreateProblemResponse(
                 req.Id,
                 new ErrorInfo("INVALID_PARAMS", ex.Message),
                 new ResponseMeta(sw.ElapsedMilliseconds, _loadedAt));
@@ -282,15 +286,22 @@ public sealed class DaemonServer : IAsyncDisposable
         catch (Exception ex)
         {
             Log($"Dispatch error ({req.Command}): {ex.Message}");
-            return CreateErrorResponse(
+            response = CreateErrorResponse(
                 req.Id,
                 new ErrorInfo("INTERNAL_ERROR", "Unexpected daemon error.", new { hint = "Check daemon logs for details." }),
                 new ResponseMeta(sw.ElapsedMilliseconds, _loadedAt));
         }
-        finally
+
+        DebugLog.Write("server", $"DispatchAsync end command={req.Command} id={req.Id} durationMs={sw.ElapsedMilliseconds}");
+
+        if (debugScope is not null)
         {
-            DebugLog.Write("server", $"DispatchAsync end command={req.Command} id={req.Id} durationMs={sw.ElapsedMilliseconds}");
+            var lines = debugScope.GetLines();
+            if (lines.Length > 0)
+                response = response with { Debug = lines };
         }
+
+        return response;
     }
 
     private static DaemonResponse CreateSuccessResponse(string id, object? data, ResponseMeta? meta)

@@ -69,7 +69,7 @@ public sealed class DaemonClient : IAsyncDisposable
         if (outcome.Type == DaemonStartupOutcomeType.Failed)
             throw new DaemonClientValidationException(outcome.Error ?? new ErrorInfo("DAEMON_STARTUP_FAILED", "Daemon startup failed."));
 
-        if (outcome.Type == DaemonStartupOutcomeType.StartedNew)
+        if (outcome.Type == DaemonStartupOutcomeType.StartedNew && DebugLog.IsEnabled)
         {
             Console.Error.WriteLine("[dotnet-aicraft] Starting analysis daemon (first run loads the solution)...");
             Console.Error.WriteLine("[dotnet-aicraft] Ready.");
@@ -92,10 +92,9 @@ public sealed class DaemonClient : IAsyncDisposable
             args.Add(value);
         }
 
-        var proc = new Process { StartInfo = CreateDaemonStartInfo(exe, args) };
-
-        if (DebugLog.IsEnabled)
-            proc.StartInfo.EnvironmentVariables["DOTNET_AICRAFT_DEBUG"] = "1";
+        var startInfo = CreateDaemonStartInfo(exe, args);
+        ApplySpawnedDaemonEnvironment(startInfo);
+        var proc = new Process { StartInfo = startInfo };
 
         using (StdHandleInheritance.Suppress())
         {
@@ -107,6 +106,12 @@ public sealed class DaemonClient : IAsyncDisposable
         _ = DrainProcessPipeAsync(proc.StandardError);
 
         return Task.FromResult(proc);
+    }
+
+    internal static void ApplySpawnedDaemonEnvironment(ProcessStartInfo startInfo)
+    {
+        // Per-request debug transport replaces DOTNET_AICRAFT_DEBUG propagation to spawned daemons.
+        startInfo.EnvironmentVariables.Remove("DOTNET_AICRAFT_DEBUG");
     }
 
     internal static ProcessStartInfo CreateDaemonStartInfo(string executablePath, IEnumerable<string> args)

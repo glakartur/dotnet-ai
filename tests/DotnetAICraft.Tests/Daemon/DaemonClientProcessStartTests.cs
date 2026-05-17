@@ -1,11 +1,43 @@
 using System.Diagnostics;
 using DotnetAICraft.Daemon;
+using DotnetAICraft.Diagnostics;
 using Xunit;
 
 namespace DotnetAICraft.Tests.Daemon;
 
 public sealed class DaemonClientProcessStartTests
 {
+    [Fact]
+    public void ApplySpawnedDaemonEnvironment_DoesNotSetDotnetAicraftDebug_EvenWhenGlobalVerboseEnabled()
+    {
+        var wasEnabled = DebugLog.IsEnabled;
+        DebugLog.Configure(true);
+        try
+        {
+            var startInfo = DaemonClient.CreateDaemonStartInfo("dotnet-aicraft", ["server", "daemon"]);
+            startInfo.EnvironmentVariables["DOTNET_AICRAFT_DEBUG"] = "1";
+
+            DaemonClient.ApplySpawnedDaemonEnvironment(startInfo);
+
+            Assert.False(startInfo.EnvironmentVariables.ContainsKey("DOTNET_AICRAFT_DEBUG"));
+        }
+        finally
+        {
+            DebugLog.Configure(wasEnabled);
+        }
+    }
+
+    [Fact]
+    public void ApplySpawnedDaemonEnvironment_StripsInheritedDotnetAicraftDebug()
+    {
+        var startInfo = DaemonClient.CreateDaemonStartInfo("dotnet-aicraft", ["server", "daemon"]);
+        startInfo.EnvironmentVariables["DOTNET_AICRAFT_DEBUG"] = "1";
+
+        DaemonClient.ApplySpawnedDaemonEnvironment(startInfo);
+
+        Assert.False(startInfo.EnvironmentVariables.ContainsKey("DOTNET_AICRAFT_DEBUG"));
+    }
+
     [Fact]
     public void CreateDaemonStartInfo_ConfiguresSafeNonInheritingDefaults()
     {
