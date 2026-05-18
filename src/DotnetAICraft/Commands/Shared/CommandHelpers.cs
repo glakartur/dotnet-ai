@@ -30,6 +30,114 @@ internal static class CommandHelpers
     public static object? GetDataOrNull(DaemonResponse response)
         => response.Result;
 
+    public static async Task<DaemonResponse?> SendWithRetryOrWriteErrorAsync(
+        string solutionPath,
+        string command,
+        object? @params = null,
+        string? idleTimeout = null,
+        PageRequest? page = null,
+        OutputFormat format = OutputFormat.Text)
+    {
+        if (!TryParseIdleTimeoutMinutes(idleTimeout, out var idleTimeoutMinutes, out var parseError))
+        {
+            WriteError(format, parseError!.Code, parseError.Message, parseError.Details);
+            return null;
+        }
+
+        var result = await SendWithRetryCoreAsync(
+            connect: () => DaemonClient.ConnectOrStartAsync(solutionPath, idleTimeout: idleTimeout),
+            send:    client => client.SendAsync(command, @params, idleTimeoutMinutes: idleTimeoutMinutes, page: page),
+            onRestart: () => Console.Error.WriteLine("[dotnet-aicraft] Daemon connection lost. Restarting..."));
+
+        if (result.Error is not null)
+        {
+            WriteError(format, result.Error.Code, result.Error.Message, result.Error.Details);
+            return null;
+        }
+
+        if (result.Response is not null)
+            FlushResponseDebugToStderr(result.Response);
+
+        return result.Response;
+    }
+
+    internal sealed record RetryResult(DaemonResponse? Response, ErrorInfo? Error, int SendAttempts);
+
+    internal static async Task<RetryResult> SendWithRetryCoreAsync(
+        Func<Task<DaemonClient>> connect,
+        Func<DaemonClient, Task<DaemonResponse>> send,
+        Action onRestart)
+    {
+        DaemonClient? client;
+        try
+        {
+            client = await connect();
+        }
+        catch (DaemonClientValidationException ex)
+        {
+            return new RetryResult(null, ex.Error, 0);
+        }
+        catch (DaemonTransportException ex)
+        {
+            return new RetryResult(null, ex.Error, 0);
+        }
+
+        var attempts = 0;
+        try
+        {
+            try
+            {
+                attempts++;
+                var response = await send(client);
+                return new RetryResult(response, null, attempts);
+            }
+            catch (DaemonClientValidationException ex)
+            {
+                return new RetryResult(null, ex.Error, attempts);
+            }
+            catch (DaemonTransportException)
+            {
+                DebugLog.Write("client", "SendWithRetryCoreAsync transport failure; restarting and retrying once");
+                onRestart();
+                await client.DisposeAsync();
+                client = null;
+            }
+
+            try
+            {
+                client = await connect();
+            }
+            catch (DaemonClientValidationException ex)
+            {
+                return new RetryResult(null, ex.Error, attempts);
+            }
+            catch (DaemonTransportException ex)
+            {
+                return new RetryResult(null, ex.Error, attempts);
+            }
+
+            try
+            {
+                attempts++;
+                var response = await send(client);
+                return new RetryResult(response, null, attempts);
+            }
+            catch (DaemonClientValidationException ex)
+            {
+                return new RetryResult(null, ex.Error, attempts);
+            }
+            catch (DaemonTransportException ex)
+            {
+                return new RetryResult(null, ex.Error, attempts);
+            }
+        }
+        finally
+        {
+            if (client is not null)
+                await client.DisposeAsync();
+        }
+    }
+
     public static async Task<DaemonResponse?> SendOrWriteValidationErrorAsync(
         DaemonClient client,
         string command,
@@ -63,6 +171,12 @@ internal static class CommandHelpers
         {
             DebugLog.Write("client", $"SendOrWriteValidationErrorAsync validation error code={ex.Error.Code}");
             WriteError(format, ex.Error.Code, ex.Error.Message, ex.Error.Details);
+            return null;
+        }
+        catch (DaemonTransportException ex)
+        {
+            DebugLog.Write("client", $"SendOrWriteValidationErrorAsync transport error code={ex.Error.Code}");
+            JsonOutput.WriteError(ex.Error.Code, ex.Error.Message, ex.Error.Details);
             return null;
         }
     }

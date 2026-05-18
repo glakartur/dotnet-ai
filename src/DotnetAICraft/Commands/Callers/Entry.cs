@@ -38,32 +38,26 @@ internal static class Entry
             ? (object)new { symbol = symbol.Trim(), direction = normalizedDirection, depth = normalizedDepth }
             : new { file = file!.FullName, line = line!.Value, col = col!.Value, direction = normalizedDirection, depth = normalizedDepth };
 
-        var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout, format);
-        if (client is null)
+        var res = await CommandHelpers.SendWithRetryOrWriteErrorAsync(
+            solutionPath, CommandName, @params, idleTimeout, format: format);
+        if (res is null)
             return;
 
-        await using (client)
+        if (CommandHelpers.TryHandleError(res, format))
+            return;
+
+        var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
+        if (format == OutputFormat.Json)
         {
-            var res = await CommandHelpers.SendOrWriteValidationErrorAsync(client, CommandName, @params, idleTimeout, format: format);
-            if (res is null)
-                return;
-
-            if (CommandHelpers.TryHandleError(res, format))
-                return;
-
-            var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
-            if (format == OutputFormat.Json)
-            {
-                JsonOutput.WriteWithSolutionRoot(solutionDir, CommandHelpers.GetDataOrNull(res));
-            }
-            else
-            {
-                TextOutput.WriteSolutionRootHeader(solutionDir);
-                var target = !string.IsNullOrWhiteSpace(symbol) ? symbol! : $"{file!.FullName}:{line}:{col}";
-                var graph = JsonOutput.Deserialize<CallGraphResult>((JsonElement)res.Result!);
-                if (graph is not null)
-                    TextOutput.WriteCallers(graph, target, solutionPath);
-            }
+            JsonOutput.WriteWithSolutionRoot(solutionDir, CommandHelpers.GetDataOrNull(res));
+        }
+        else
+        {
+            TextOutput.WriteSolutionRootHeader(solutionDir);
+            var target = !string.IsNullOrWhiteSpace(symbol) ? symbol! : $"{file!.FullName}:{line}:{col}";
+            var graph = JsonOutput.Deserialize<CallGraphResult>((JsonElement)res.Result!);
+            if (graph is not null)
+                TextOutput.WriteCallers(graph, target, solutionPath);
         }
     }
 }

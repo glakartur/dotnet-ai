@@ -24,38 +24,36 @@ internal static class Entry
             return;
         }
 
-        var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout, format);
-        if (client is null)
-            return;
-
-        await using (client)
-        {
-            var res = await CommandHelpers.SendOrWriteValidationErrorAsync(client, CommandName, new
+        var res = await CommandHelpers.SendWithRetryOrWriteErrorAsync(
+            solutionPath,
+            CommandName,
+            new
             {
                 kind = normalizedKind,
                 project,
                 publicOnly,
                 includeGenerated
-            }, idleTimeout, format: format);
+            },
+            idleTimeout,
+            format: format);
 
-            if (res is null)
-                return;
+        if (res is null)
+            return;
 
-            if (CommandHelpers.TryHandleError(res, format))
-                return;
+        if (CommandHelpers.TryHandleError(res, format))
+            return;
 
-            var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
-            if (format == OutputFormat.Json)
-            {
-                JsonOutput.WriteWithSolutionRoot(solutionDir, CommandHelpers.GetDataOrNull(res));
-            }
-            else
-            {
-                TextOutput.WriteSolutionRootHeader(solutionDir);
-                var summary = JsonOutput.Deserialize<UnusedScanSummary>((JsonElement)res.Result!);
-                if (summary is not null)
-                    TextOutput.WriteUnused(summary, solutionPath);
-            }
+        var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
+        if (format == OutputFormat.Json)
+        {
+            JsonOutput.WriteWithSolutionRoot(solutionDir, CommandHelpers.GetDataOrNull(res));
+        }
+        else
+        {
+            TextOutput.WriteSolutionRootHeader(solutionDir);
+            var summary = JsonOutput.Deserialize<UnusedScanSummary>((JsonElement)res.Result!);
+            if (summary is not null)
+                TextOutput.WriteUnused(summary, solutionPath);
         }
     }
 }

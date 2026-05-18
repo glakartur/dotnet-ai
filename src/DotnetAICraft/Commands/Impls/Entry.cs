@@ -15,30 +15,24 @@ internal static class Entry
         string? idleTimeout,
         OutputFormat format = OutputFormat.Text)
     {
-        var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout, format);
-        if (client is null)
+        var res = await CommandHelpers.SendWithRetryOrWriteErrorAsync(
+            solutionPath, CommandName, new { symbol }, idleTimeout, format: format);
+        if (res is null)
             return;
 
-        await using (client)
+        if (CommandHelpers.TryHandleError(res, format))
+            return;
+
+        var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
+        if (format == OutputFormat.Json)
         {
-            var res = await CommandHelpers.SendOrWriteValidationErrorAsync(client, CommandName, new { symbol }, idleTimeout, format: format);
-            if (res is null)
-                return;
-
-            if (CommandHelpers.TryHandleError(res, format))
-                return;
-
-            var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
-            if (format == OutputFormat.Json)
-            {
-                JsonOutput.WriteWithSolutionRoot(solutionDir, CommandHelpers.GetDataOrNull(res));
-            }
-            else
-            {
-                TextOutput.WriteSolutionRootHeader(solutionDir);
-                var items = JsonOutput.Deserialize<IReadOnlyList<SymbolResult>>((JsonElement)res.Result!) ?? Array.Empty<SymbolResult>();
-                TextOutput.WriteImpls(items, symbol, solutionPath);
-            }
+            JsonOutput.WriteWithSolutionRoot(solutionDir, CommandHelpers.GetDataOrNull(res));
+        }
+        else
+        {
+            TextOutput.WriteSolutionRootHeader(solutionDir);
+            var items = JsonOutput.Deserialize<IReadOnlyList<SymbolResult>>((JsonElement)res.Result!) ?? Array.Empty<SymbolResult>();
+            TextOutput.WriteImpls(items, symbol, solutionPath);
         }
     }
 }

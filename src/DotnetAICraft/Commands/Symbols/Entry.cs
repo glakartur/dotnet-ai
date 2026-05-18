@@ -33,48 +33,41 @@ internal static class Entry
             return;
         }
 
-        var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout, format);
-        if (client is null)
+        var res = await CommandHelpers.SendWithRetryOrWriteErrorAsync(
+            solutionPath,
+            CommandName,
+            new
+            {
+                pattern,
+                kind = normalizedKind
+            },
+            idleTimeout,
+            page: new DotnetAICraft.Models.PageRequest(normalizedOffset, normalizedLimit),
+            format: format);
+
+        if (res is null)
             return;
 
-        await using (client)
+        if (CommandHelpers.TryHandleError(res, format))
+            return;
+
+        DebugLog.Write("symbols", "ExecuteAsync writing output to stdout");
+        var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
+        if (format == OutputFormat.Json)
         {
-            var res = await CommandHelpers.SendOrWriteValidationErrorAsync(
-                client,
-                CommandName,
-                new
-                {
-                    pattern,
-                    kind = normalizedKind
-                },
-                idleTimeout,
-                page: new DotnetAICraft.Models.PageRequest(normalizedOffset, normalizedLimit),
-                format: format);
-
-            if (res is null)
-                return;
-
-            if (CommandHelpers.TryHandleError(res, format))
-                return;
-
-            DebugLog.Write("symbols", "ExecuteAsync writing output to stdout");
-            var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
-            if (format == OutputFormat.Json)
-            {
-                var items = JsonOutput.Deserialize<IReadOnlyList<SymbolResult>>((JsonElement)res.Result!)
-                    ?? Array.Empty<SymbolResult>();
-                var hasMore = res.Page?.HasMore ?? false;
-                JsonOutput.WriteWithSolutionRoot(solutionDir, new SymbolsResultPage(items, hasMore));
-            }
-            else
-            {
-                TextOutput.WriteSolutionRootHeader(solutionDir);
-                var items = JsonOutput.Deserialize<IReadOnlyList<SymbolResult>>((JsonElement)res.Result!)
-                    ?? Array.Empty<SymbolResult>();
-                var hasMore = res.Page?.HasMore ?? false;
-                TextOutput.WriteSymbols(new SymbolsResultPage(items, hasMore), pattern, solutionPath);
-            }
-            DebugLog.Write("symbols", "ExecuteAsync finished");
+            var items = JsonOutput.Deserialize<IReadOnlyList<SymbolResult>>((JsonElement)res.Result!)
+                ?? Array.Empty<SymbolResult>();
+            var hasMore = res.Page?.HasMore ?? false;
+            JsonOutput.WriteWithSolutionRoot(solutionDir, new SymbolsResultPage(items, hasMore));
         }
+        else
+        {
+            TextOutput.WriteSolutionRootHeader(solutionDir);
+            var items = JsonOutput.Deserialize<IReadOnlyList<SymbolResult>>((JsonElement)res.Result!)
+                ?? Array.Empty<SymbolResult>();
+            var hasMore = res.Page?.HasMore ?? false;
+            TextOutput.WriteSymbols(new SymbolsResultPage(items, hasMore), pattern, solutionPath);
+        }
+        DebugLog.Write("symbols", "ExecuteAsync finished");
     }
 }

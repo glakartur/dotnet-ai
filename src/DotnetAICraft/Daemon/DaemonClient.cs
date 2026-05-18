@@ -220,14 +220,48 @@ public sealed class DaemonClient : IAsyncDisposable
             IdleTimeoutMinutes: idleTimeoutMinutes,
             Page: page);
 
-        await _writer.WriteLineAsync(JsonOutput.Serialize(request));
-        await _writer.FlushAsync();
+        try
+        {
+            await _writer.WriteLineAsync(JsonOutput.Serialize(request));
+            await _writer.FlushAsync();
+        }
+        catch (Exception ex) when (IsTransportFailure(ex))
+        {
+            DebugLog.Write("client", $"SendAsync transport failure on write command={command} type={ex.GetType().FullName}");
+            throw new DaemonTransportException(BuildTransportError(command, "write", ex), ex);
+        }
+
         DebugLog.Write("client", $"SendAsync request sent command={command} requestId={request.Id}");
 
-        var line = await ReadResponseLineOrThrowAsync(_reader, command, DefaultResponseTimeout);
+        string line;
+        try
+        {
+            line = await ReadResponseLineOrThrowAsync(_reader, command, DefaultResponseTimeout);
+        }
+        catch (Exception ex) when (IsTransportFailure(ex))
+        {
+            DebugLog.Write("client", $"SendAsync transport failure on read command={command} type={ex.GetType().FullName}");
+            throw new DaemonTransportException(BuildTransportError(command, "read", ex), ex);
+        }
+
         DebugLog.Write("client", $"SendAsync response line received command={command} length={line.Length}");
         return ParseResponseOrThrow(line, command);
     }
+
+    private static bool IsTransportFailure(Exception ex)
+        => ex is IOException or SocketException or ObjectDisposedException;
+
+    private static ErrorInfo BuildTransportError(string command, string stage, Exception inner)
+        => new(
+            "DAEMON_TRANSPORT_FAILED",
+            "Daemon transport failed.",
+            new
+            {
+                command,
+                stage,
+                innerType = inner.GetType().FullName,
+                innerMessage = inner.Message
+            });
 
     internal static async Task<string> ReadResponseLineOrThrowAsync(
         TextReader reader,
@@ -495,6 +529,23 @@ public sealed class DaemonClientValidationException : Exception
 
     public DaemonClientValidationException(ErrorInfo error)
         : base(error.Message)
+    {
+        Error = error;
+    }
+}
+
+public sealed class DaemonTransportException : Exception
+{
+    public ErrorInfo Error { get; }
+
+    public DaemonTransportException(ErrorInfo error)
+        : base(error.Message)
+    {
+        Error = error;
+    }
+
+    public DaemonTransportException(ErrorInfo error, Exception innerException)
+        : base(error.Message, innerException)
     {
         Error = error;
     }

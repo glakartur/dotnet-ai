@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
 using DotnetAICraft.Daemon;
 using Xunit;
@@ -537,6 +539,220 @@ public sealed class DaemonStartupCoordinatorTests
         {
             if (Directory.Exists(stalePath))
                 Directory.Delete(stalePath);
+        }
+    }
+
+    [Fact]
+    public async Task TryConnectAsync_WithStaleSocketFileAndNoListener_ReturnsNull()
+    {
+        // A stale .sock file (left over from a crashed daemon) must not be mistaken for a live
+        // daemon. TryConnectAsync returns null so the coordinator falls through to the start-new
+        // path, where PrepareServerStartAsync's TryDeleteStaleSocket cleans it up.
+        var solutionPath = CreateUniqueSolutionPath();
+        var socketPath = DaemonClient.GetSocketPath(solutionPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(socketPath)!);
+
+        try
+        {
+            await File.WriteAllTextAsync(socketPath, "stale");
+
+            var client = await DaemonClient.TryConnectAsync(solutionPath);
+
+            Assert.Null(client);
+        }
+        finally
+        {
+            if (File.Exists(socketPath))
+                File.Delete(socketPath);
+        }
+    }
+
+    [Fact]
+    public async Task TryConnectAsync_WithDeadListener_ReturnsNull()
+    {
+        // A socket file with a listener that subsequently shuts down should also produce a null
+        // result from TryConnectAsync — the connect side relies on this signal to fall through
+        // to startup.
+        var solutionPath = CreateUniqueSolutionPath();
+        var socketPath = DaemonClient.GetSocketPath(solutionPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(socketPath)!);
+
+        var listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        try
+        {
+            if (File.Exists(socketPath))
+                File.Delete(socketPath);
+
+            listener.Bind(new UnixDomainSocketEndPoint(socketPath));
+            listener.Listen(8);
+            listener.Shutdown(SocketShutdown.Both);
+            listener.Dispose();
+
+            var client = await DaemonClient.TryConnectAsync(solutionPath);
+
+            Assert.Null(client);
+        }
+        finally
+        {
+            if (File.Exists(socketPath))
+                File.Delete(socketPath);
+        }
+    }
+
+    [Fact]
+    public async Task ConnectOrStartAsync_WithExistingDaemonAndIdleTimeout_DoesNotIssueSetIdleTimeoutRequest()
+    {
+        var solutionPath = CreateUniqueSolutionPath();
+        var socketPath = DaemonClient.GetSocketPath(solutionPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(socketPath)!);
+
+        await using var fake = await FakeDaemonListener.StartAsync(socketPath);
+
+        DaemonIdleTimeoutParser.TryParse("30m", out var setting, out _);
+        Assert.NotNull(setting);
+
+        var outcome = await DaemonStartupCoordinator.ConnectOrStartAsync(
+            solutionPath,
+            setting,
+            readyTimeout: TimeSpan.FromSeconds(5));
+
+        try
+        {
+            Assert.Equal(DaemonStartupOutcomeType.AttachedExisting, outcome.Type);
+            Assert.NotNull(outcome.Client);
+
+            // Give the fake listener a brief window to observe any unexpected request.
+            await Task.Delay(100);
+
+            Assert.Empty(fake.ReceivedRequestCommands);
+        }
+        finally
+        {
+            if (outcome.Client is not null)
+                await outcome.Client.DisposeAsync();
+        }
+    }
+
+    private sealed class FakeDaemonListener : IAsyncDisposable
+    {
+        private readonly Socket _listener;
+        private readonly string _socketPath;
+        private readonly CancellationTokenSource _cts = new();
+        private readonly List<string> _receivedCommands = new();
+        private readonly object _gate = new();
+        private readonly Task _acceptLoop;
+
+        private FakeDaemonListener(Socket listener, string socketPath)
+        {
+            _listener = listener;
+            _socketPath = socketPath;
+            _acceptLoop = Task.Run(AcceptLoopAsync);
+        }
+
+        public static Task<FakeDaemonListener> StartAsync(string socketPath)
+        {
+            if (File.Exists(socketPath))
+                File.Delete(socketPath);
+
+            var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+            socket.Bind(new UnixDomainSocketEndPoint(socketPath));
+            socket.Listen(8);
+            return Task.FromResult(new FakeDaemonListener(socket, socketPath));
+        }
+
+        public IReadOnlyList<string> ReceivedRequestCommands
+        {
+            get
+            {
+                lock (_gate)
+                    return _receivedCommands.ToArray();
+            }
+        }
+
+        private async Task AcceptLoopAsync()
+        {
+            try
+            {
+                while (!_cts.IsCancellationRequested)
+                {
+                    Socket accepted;
+                    try
+                    {
+                        accepted = await _listener.AcceptAsync(_cts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        return;
+                    }
+
+                    _ = Task.Run(() => HandleClientAsync(accepted));
+                }
+            }
+            catch
+            {
+                // Swallow; the test asserts on collected state, not on listener health.
+            }
+        }
+
+        private async Task HandleClientAsync(Socket socket)
+        {
+            try
+            {
+                using var stream = new NetworkStream(socket, ownsSocket: true);
+                using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
+                var line = await reader.ReadLineAsync(_cts.Token);
+                if (line is null)
+                    return;
+
+                using var doc = JsonDocument.Parse(line);
+                if (doc.RootElement.TryGetProperty("command", out var commandElement))
+                {
+                    var command = commandElement.GetString() ?? "<null>";
+                    lock (_gate)
+                        _receivedCommands.Add(command);
+                }
+            }
+            catch
+            {
+                // Ignore parse / IO failures; the test does not depend on a clean response.
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            _cts.Cancel();
+            try
+            {
+                _listener.Shutdown(SocketShutdown.Both);
+            }
+            catch
+            {
+            }
+
+            _listener.Dispose();
+
+            try
+            {
+                await _acceptLoop;
+            }
+            catch
+            {
+            }
+
+            _cts.Dispose();
+
+            try
+            {
+                if (File.Exists(_socketPath))
+                    File.Delete(_socketPath);
+            }
+            catch
+            {
+            }
         }
     }
 

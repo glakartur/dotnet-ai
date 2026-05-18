@@ -5,19 +5,33 @@ using DotnetAICraft.Diagnostics;
 using DotnetAICraft.Output;
 using Microsoft.Build.Locator;
 
+try
+{
+
 // MSBuild MUST be registered before any Roslyn/MSBuild types are loaded.
 // This finds the .NET SDK bundled MSBuild — works on Linux, macOS and Windows.
 if (!MSBuildLocator.IsRegistered)
 {
-    var instances = MSBuildLocator.QueryVisualStudioInstances()
-        .OrderByDescending(i => i.Version)
-        .ToList();
+    try
+    {
+        var instances = MSBuildLocator.QueryVisualStudioInstances()
+            .OrderByDescending(i => i.Version)
+            .ToList();
 
-    var instance = instances.FirstOrDefault()
-        ?? throw new InvalidOperationException(
-            "Could not find .NET SDK. Make sure 'dotnet' is installed and available in PATH.");
+        var instance = instances.FirstOrDefault()
+            ?? throw new InvalidOperationException(
+                "Could not find .NET SDK. Make sure 'dotnet' is installed and available in PATH.");
 
-    MSBuildLocator.RegisterInstance(instance);
+        MSBuildLocator.RegisterInstance(instance);
+    }
+    catch (Exception ex)
+    {
+        JsonOutput.WriteError(
+            "MSBUILD_REGISTRATION_FAILED",
+            ex.Message,
+            new { type = ex.GetType().FullName });
+        return 1;
+    }
 }
 
 // ── Shared options ────────────────────────────────────────────────────────────
@@ -83,4 +97,14 @@ static OutputFormat InvalidFormat(ArgumentResult result, string raw)
 {
     result.AddError($"Invalid --format value '{raw}'. Accepted values: text, json.");
     return OutputFormat.Text;
+}
+}
+catch (Exception ex)
+{
+    if (DebugLog.IsEnabled)
+        Console.Error.WriteLine(ex);
+
+    var error = TopLevelExceptionFirewall.Map(ex);
+    JsonOutput.WriteError(error.Code, error.Message, error.Details);
+    return 1;
 }

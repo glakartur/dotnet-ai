@@ -24,36 +24,34 @@ internal static class Entry
             return;
         }
 
-        var client = await CommandHelpers.ConnectOrWriteValidationErrorAsync(solutionPath, idleTimeout, format);
-        if (client is null)
-            return;
-
-        await using (client)
-        {
-            var res = await CommandHelpers.SendOrWriteValidationErrorAsync(client, CommandName, new
+        var res = await CommandHelpers.SendWithRetryOrWriteErrorAsync(
+            solutionPath,
+            CommandName,
+            new
             {
                 severity = normalizedSeverity,
                 project,
                 file = file?.FullName
-            }, idleTimeout, format: format);
+            },
+            idleTimeout,
+            format: format);
 
-            if (res is null)
-                return;
+        if (res is null)
+            return;
 
-            if (CommandHelpers.TryHandleError(res, format))
-                return;
+        if (CommandHelpers.TryHandleError(res, format))
+            return;
 
-            var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
-            if (format == OutputFormat.Json)
-            {
-                JsonOutput.WriteWithSolutionRoot(solutionDir, CommandHelpers.GetDataOrNull(res));
-            }
-            else
-            {
-                TextOutput.WriteSolutionRootHeader(solutionDir);
-                var items = JsonOutput.Deserialize<IReadOnlyList<DiagnosticResult>>((JsonElement)res.Result!) ?? Array.Empty<DiagnosticResult>();
-                TextOutput.WriteDiagnostics(items, solutionPath);
-            }
+        var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
+        if (format == OutputFormat.Json)
+        {
+            JsonOutput.WriteWithSolutionRoot(solutionDir, CommandHelpers.GetDataOrNull(res));
+        }
+        else
+        {
+            TextOutput.WriteSolutionRootHeader(solutionDir);
+            var items = JsonOutput.Deserialize<IReadOnlyList<DiagnosticResult>>((JsonElement)res.Result!) ?? Array.Empty<DiagnosticResult>();
+            TextOutput.WriteDiagnostics(items, solutionPath);
         }
     }
 }

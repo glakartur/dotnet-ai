@@ -89,20 +89,7 @@ public static class DaemonStartupCoordinator
 
         var existing = await DaemonClient.TryConnectAsync(solutionPath);
         if (existing is not null)
-        {
-            try
-            {
-                if (idleTimeout is not null)
-                    await DaemonClient.ApplyIdleTimeoutAsync(existing, idleTimeout);
-
-                return DaemonStartupOutcome.Attached(existing);
-            }
-            catch
-            {
-                await existing.DisposeAsync();
-                throw;
-            }
-        }
+            return DaemonStartupOutcome.Attached(existing);
 
         var startupProcess = await DaemonClient.StartDaemonProcessAsync(solutionPath, idleTimeout);
 
