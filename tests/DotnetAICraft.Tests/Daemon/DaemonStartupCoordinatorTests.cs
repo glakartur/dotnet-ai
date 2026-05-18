@@ -585,7 +585,6 @@ public sealed class DaemonStartupCoordinatorTests
 
             listener.Bind(new UnixDomainSocketEndPoint(socketPath));
             listener.Listen(8);
-            listener.Shutdown(SocketShutdown.Both);
             listener.Dispose();
 
             var client = await DaemonClient.TryConnectAsync(solutionPath);
