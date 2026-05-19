@@ -32,6 +32,52 @@ Requires .NET 9 SDK or later. Works on **Linux, macOS and Windows**.
 
 ---
 
+## For AI Agents
+
+`dotnet-aicraft` is the **default tool for all symbol-level questions** in a .NET project. It gives compiler-level semantic answers that grep cannot — handling renamed variables, interface dispatch, overrides, and extension methods that text search misses.
+
+### Find the solution file
+
+```bash
+find . -name "*.sln" -maxdepth 4 | head -5
+```
+
+### Typical agent workflows
+
+**Before modifying a method — check all call sites:**
+```bash
+dotnet aicraft refs -s App.sln --file path/to/File.cs --line 42 --col 18
+```
+
+**Before deleting code — confirm it's unused:**
+```bash
+dotnet aicraft refs -s App.sln --symbol "MyApp.Services.OrderService.ProcessOrder"
+dotnet aicraft unused -s App.sln --kind method --project MyApp.Services
+```
+
+**Safe rename — always dry-run first:**
+```bash
+dotnet aicraft rename -s App.sln --symbol "MyApp.Services.OrderService.ProcessOrder" --to "HandleOrder" --dry-run
+dotnet aicraft rename -s App.sln --symbol "MyApp.Services.OrderService.ProcessOrder" --to "HandleOrder"
+```
+
+**Discover a fully-qualified name from a partial name:**
+```bash
+dotnet aicraft symbols -s App.sln --pattern "ProcessOrder*"
+# Use the fullName from the result in follow-up commands
+```
+
+**Understand what implements an interface:**
+```bash
+dotnet aicraft impls -s App.sln --symbol "MyApp.Interfaces.IOrderProcessor"
+```
+
+### Output format
+
+The default `text` format is optimized for LLM reading (compiler/ripgrep-style). Pass `--format json` only when you need structured fields for programmatic processing.
+
+---
+
 ## Usage
 
 ### Shared options
@@ -176,6 +222,8 @@ dotnet aicraft symbols --solution App.sln --pattern "*Repository" --kind class
 dotnet aicraft symbols --solution App.sln --pattern "*" --kind all --limit 100 --offset 200
 ```
 
+Valid `--kind` values: `all` (default), `type`, `member`, `namespace`, `class`, `interface`, `struct`, `enum`, `delegate`, `method`, `constructor`, `property`, `field`, `event`. Default page size is 200 (max 2000); use `--offset` to paginate.
+
 `symbols` returns paged JSON:
 
 ```json
@@ -201,8 +249,11 @@ dotnet aicraft symbols --solution App.sln --pattern "*" --kind all --limit 100 -
 
 ```bash
 dotnet aicraft diagnostics --solution App.sln --severity warning
+dotnet aicraft diagnostics --solution App.sln --severity error
 dotnet aicraft diagnostics --solution App.sln --project MyApp.Core --file src/Services/OrderService.cs
 ```
+
+`--severity` values: `all` (default), `error`, `warning`, `info`, `hidden`.
 
 ### Find likely unused symbols (dead-code candidates)
 
@@ -338,7 +389,7 @@ the stdout result so result parsing stays clean.
 ## Building from source
 
 ```bash
-git clone https://github.com/yourusername/dotnet-aicraft
+git clone https://github.com/glakartur/dotnet-ai
 cd dotnet-aicraft
 
 dotnet restore

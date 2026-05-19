@@ -187,7 +187,7 @@ In scripts or agents processing the output, always check for the `error` field b
 ## Output Field Reference Quick Lookup
 
 ### `refs` and `callers`
-- `file` — absolute path to source file
+- `file` — path relative to solution root (forward-slash separators on all platforms)
 - `line` — 1-based line number of the reference
 - `col` — 1-based column number
 - `context` — source line text at that location
@@ -205,6 +205,6 @@ In scripts or agents processing the output, always check for the `error` field b
 
 ### `symbols`
 - `name` — short identifier name
-- `fullyQualifiedName` — fully-qualified name to use in subsequent commands
-- `kind` — `Method`, `Class`, `Interface`, `Property`, `Field`, `Namespace`, etc.
-- `file`, `line`, `col` — declaration location
+- `fullName` — fully-qualified name to use in subsequent commands
+- `kind` — `method`, `class`, `interface`, `property`, `field`, `namespace`, etc.
+- `file`, `line`, `col` — declaration location (file is relative to solution root)

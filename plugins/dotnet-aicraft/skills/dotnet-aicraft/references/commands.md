@@ -267,9 +267,9 @@ Search for symbols by name pattern. Supports glob-style wildcards (`*`, `?`).
 |---|---|---|
 | `--solution` | Yes | Path to solution |
 | `--pattern` | Yes | Name pattern with optional `*` and `?` wildcards |
-| `--kind` | No | Filter by kind. Coarse: `all`, `type`, `member`, `namespace`. Granular: `class`, `interface`, `struct`, `enum`, `delegate`, `method`, `property`, `field`, `event`. Default: `all` |
-| `--limit` | No | Max items per page |
-| `--offset` | No | Skip first N matches (for pagination) |
+| `--kind` | No | Filter by kind. Coarse: `all`, `type`, `member`, `namespace`. Granular: `class`, `interface`, `struct`, `enum`, `delegate`, `method`, `constructor`, `property`, `field`, `event`. Default: `all` |
+| `--limit` | No | Max items per page (default: 200, max: 2000) |
+| `--offset` | No | Skip first N matches (for pagination, default: 0) |
 
 ### Examples
 
@@ -311,7 +311,7 @@ List Roslyn diagnostics across the solution with filters.
 | Option | Required | Description |
 |---|---|---|
 | `--solution` | Yes | Path to solution |
-| `--severity` | No | `error`, `warning`, `info`, `hidden` |
+| `--severity` | No | `all` (default), `error`, `warning`, `info`, `hidden` |
 | `--project` | No | Restrict to a single project name |
 | `--file` | No | Restrict to a single file |
 
@@ -355,7 +355,7 @@ Find symbols with no references — candidates for dead code.
 | Option | Required | Description |
 |---|---|---|
 | `--solution` | Yes | Path to solution |
-| `--kind` | No | Restrict to a kind (e.g. `method`, `class`, `property`) |
+| `--kind` | No | Restrict to a kind: `all` (default), `type`, `member`, `namespace`, `class`, `interface`, `struct`, `enum`, `delegate`, `method`, `constructor`, `property`, `field`, `event` |
 | `--project` | No | Restrict to a single project |
 | `--public-only` | No | Only include public symbols |
 | `--include-generated` | No | Include generated code (default: skipped) |

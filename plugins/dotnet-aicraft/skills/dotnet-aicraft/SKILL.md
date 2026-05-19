@@ -1,15 +1,17 @@
 ---
 name: dotnet-aicraft
 description: >
-  This skill should be used whenever working on a .NET solution — not only when explicitly asked.
+  This skill MUST be loaded whenever working on a .NET solution — not only when explicitly asked.
   Load proactively when: exploring or onboarding to a .NET codebase; modifying, deleting, or moving
   any method, class, interface, or property; planning a refactoring; checking whether code is safe to
   remove; understanding how classes relate; navigating call hierarchies (incoming/outgoing); resolving
   declarations; inspecting compiler diagnostics; or finding unused/dead-code candidates.
-  Also load when the user asks to "find references", "find all usages", "rename a symbol",
+  Also load when the user asks: "find references", "find all usages", "rename a symbol",
   "find implementations", "find callers", "find definition", "search symbols", "diagnostics",
-  "unused code", or "check daemon status".
-  Prefer `dotnet aicraft` over grep/text-search for any symbol-level question in a .NET project.
+  "unused code", "check daemon status", "is this used?", "can I delete this?",
+  "what calls X?", "what does X call?", "where is X defined?", "what implements X?",
+  "is X referenced anywhere?", "who uses this?", "is this dead code?".
+  ALWAYS prefer `dotnet aicraft` over grep/Glob/text-search for any symbol-level question in a .NET project.
 version: 0.5.0
 ---
 
@@ -17,25 +19,62 @@ version: 0.5.0
 
 Semantic .NET code analysis via Roslyn — compiler-level precision, not text search. A background daemon loads the solution once; subsequent commands respond in ~50ms. Auto-starts on first use, shuts down after 60 min idle.
 
+## Never Use Text Search for Symbol Questions
+
+**Do NOT use grep, Glob, or Read to answer these questions in a .NET project:**
+
+| Question | Wrong approach | Correct command |
+|---|---|---|
+| Where is symbol X used? | `grep "MethodName"` | `refs --symbol "FQN"` |
+| What calls this method? | grep for call patterns | `callers --symbol "FQN"` |
+| Is this code dead/unused? | grep for the name | `unused` + `refs` |
+| What implements this interface? | grep for `: IFoo` | `impls --symbol "FQN"` |
+| Where is X declared? | Read files | `definition --symbol "FQN"` |
+| Does renaming X break anything? | manual grep | `rename --dry-run` |
+
+Text search **misses**: renamed variables, interface dispatch, virtual/override calls, extension methods, and XML doc references. Roslyn finds all of them.
+
+## Solution Discovery
+
+If the solution path is unknown:
+
+```bash
+find . -name "*.sln" -maxdepth 4 | head -5
+# or check the project root directly
+ls *.sln 2>/dev/null
+```
+
+Pass the found path as `-s <path>` to every command.
+
+## Discovering Fully-Qualified Names
+
+Most commands require a fully-qualified symbol name (FQN). When you only have a short name, discover it first:
+
+```bash
+dotnet aicraft symbols -s App.sln --pattern "MethodName*"
+dotnet aicraft symbols -s App.sln --pattern "*ClassName*" --kind class
+```
+
+Use the `fullName` field from the result in all follow-up commands.
+
 ## Output Format
 
-Commands emit a **compiler/ripgrep-style text format on stdout by default** —
-optimized for LLM consumption. Pass `--format json` to get the stable pretty-printed
-JSON schema (use this when scripting or when you need machine-parsable fields).
-Daemon logs and `--debug` output always go to **stderr**, and debug output is
-flushed **before** the stdout result so result parsing is never interleaved.
+Commands emit a **compiler/ripgrep-style text format on stdout by default** — optimized for LLM reading.
 
-File paths in results are **relative to the solution directory**, with
-forward-slash separators on all platforms. The absolute solution root is
-surfaced once per response:
+```
+12 references to MyApp.Services.OrderService.ProcessOrder in App.sln
+SolutionRoot: /abs/path/to/repo
+
+src/Controllers/OrderController.cs:87:9: _orderService.ProcessOrder(dto.ToRequest());
+```
+
+Use `--format json` when you need to process results programmatically (count items, filter, iterate fields). For reading and understanding results, the default text format is sufficient and more concise.
+
+File paths in results are **relative to the solution directory** with forward-slash separators. The absolute root is surfaced once per response:
 - In `--format text`: a `SolutionRoot: <abs path>` header line.
 - In `--format json`: a top-level `solutionRoot` field on the envelope.
 
-For list-shaped results (`refs`, `impls`, `callers`, `symbols`, `diagnostics`,
-`unused`) the JSON envelope is `{ "solutionRoot": "...", "items": [...] }` — the
-list lives under `items`, not as a top-level array. Out-of-tree paths (different
-volume, generator output) fall back to their absolute form with forward-slash
-normalization.
+For list-shaped results (`refs`, `impls`, `callers`, `symbols`, `diagnostics`, `unused`) the JSON envelope is `{ "solutionRoot": "...", "items": [...] }` — the list lives under `items`, not as a top-level array.
 
 ## When to Use Proactively
 
@@ -160,7 +199,7 @@ dotnet aicraft symbols -s App.sln --pattern "Process*" --kind method
 dotnet aicraft symbols -s App.sln --pattern "*" --kind class --limit 100 --offset 200
 ```
 
-Kinds: `class|interface|method|property|field|event|...`
+Kinds: `class|interface|struct|enum|delegate|method|constructor|property|field|event|type|member|namespace|all`
 Output: `SymbolsResultPage { items[], hasMore }`
 
 ### server — Daemon Management
