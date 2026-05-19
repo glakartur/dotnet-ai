@@ -12,7 +12,7 @@ description: >
   "what calls X?", "what does X call?", "where is X defined?", "what implements X?",
   "is X referenced anywhere?", "who uses this?", "is this dead code?".
   ALWAYS prefer `dotnet aicraft` over grep/Glob/text-search for any symbol-level question in a .NET project.
-version: 0.5.0
+version: 0.6.0
 ---
 
 # dotnet-aicraft

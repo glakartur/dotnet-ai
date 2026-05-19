@@ -1,6 +1,6 @@
 {
   "name": "dotnet-aicraft",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "description": "Semantic .NET code analysis for AI agents — find references, rename symbols, explore call hierarchy using Roslyn.",
   "author": {
     "name": "Artur Gawrylak",
